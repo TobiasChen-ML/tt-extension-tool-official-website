@@ -3,57 +3,198 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>控制台 - tkspeed</title>
+  <title>控制台 - TK加速器</title>
   <link rel="stylesheet" href="/static/site.css" />
   <script>
     async function recharge(){
       const amount = document.getElementById('amount').value || '19.90';
-      const res = await fetch('/recharge/', {method:'POST', headers:{'X-CSRFToken': '{{ csrf_token }}'}});
-      const data = await res.json();
-      if(data.code === 200){
-        document.getElementById('qrcode').innerHTML = `<img src="${data.data}" alt="二维码" style="width:220px;height:220px;"/>`;
-      } else {
-        alert('下单失败');
+      const btn = document.getElementById('recharge-btn');
+      btn.disabled = true; btn.textContent = '下单中...';
+      try{
+        const res = await fetch('/recharge/', {method:'POST', headers:{'X-CSRFToken': '{{ csrf_token }}'}});
+        const data = await res.json();
+        if(data.code === 200){
+          document.getElementById('qrcode').innerHTML = `<img src="${data.data}" alt="二维码" style="width:220px;height:220px;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.12)"/>`;
+        } else {
+          alert(data.msg || '下单失败');
+        }
+      }catch(e){
+        alert('网络异常，请稍后重试');
+      }finally{
+        btn.disabled = false; btn.textContent = '去微信支付';
+      }
+    }
+    document.addEventListener('click', function(e){
+      const pill = e.target.closest('[data-amount]');
+      if(!pill) return;
+      const v = pill.getAttribute('data-amount');
+      const input = document.getElementById('amount');
+      input.value = v;
+      document.querySelectorAll('[data-amount]').forEach(el=>el.classList.remove('active'));
+      pill.classList.add('active');
+    });
+    function toggleSecret(id, btn){
+      const input = document.getElementById(id);
+      if(!input) return;
+      const showing = input.getAttribute('data-showing') === '1';
+      input.type = showing ? 'password' : 'text';
+      input.setAttribute('data-showing', showing ? '0' : '1');
+      if(btn){
+        btn.setAttribute('aria-label', showing ? '显示密钥' : '隐藏密钥');
+        btn.classList.toggle('on', !showing);
       }
     }
   </script>
+  <style>
+    .secret-cell{ display:flex; align-items:center; gap:8px; }
+    .secret-input{ width: 280px; }
+    .icon-btn{ background:transparent; border:0; cursor:pointer; padding:4px; border-radius:6px; color:#4b5563; }
+    .icon-btn:hover{ background: rgba(0,0,0,0.05); }
+    .icon-btn.on{ color:#111827; }
+    .icon-eye{ width:20px; height:20px; display:block; }
+  </style>
 </head>
 <body>
-  <div class="container">
-    <h1>欢迎，{{ request.user.username }}</h1>
-    <div class="profile">
-      <div class="avatar">{{ profile.avatar }}</div>
-      <div>
-        <div>手机号：{{ profile.phone }}</div>
-        <div>本月额度：{{ profile.monthly_quota }} 次，已使用 {{ profile.quota_used }} 次</div>
+  <header class="nav">
+    <div class="container">
+      <div class="logo">TK加速器</div>
+      <nav>
+        <a href="/">首页</a>
+        <a href="/dashboard/">控制台</a>
+      </nav>
+      <div class="actions">
+        <a class="btn small" href="/logout/">退出登录</a>
       </div>
     </div>
+  </header>
 
-    <div class="recharge">
-      <h3>充值额度</h3>
-      <input id="amount" placeholder="金额（元）" value="19.90" />
-      <button class="btn primary" onclick="recharge()">去微信支付</button>
-      <div id="qrcode" style="margin-top:16px;"></div>
+  <main class="section">
+    <div class="container">
+      <div class="dash-header">
+        <div>
+          <h1 class="dash-title">欢迎，{{ request.user.username }}</h1>
+          <p class="dash-sub">在这里管理您的账户、充值额度、查看订单与使用情况</p>
+        </div>
+      </div>
+
+      <div class="metric-row">
+        <div class="kpi">
+          <div class="num">{{ profile.monthly_quota }}</div>
+          <div class="label">本月额度（次）</div>
+        </div>
+        <div class="kpi">
+          <div class="num">{{ profile.quota_used }}</div>
+          <div class="label">本月已使用（次）</div>
+        </div>
+        <div class="kpi">
+          <div class="num">{{ profile.phone|default:'未绑定' }}</div>
+          <div class="label">手机绑定</div>
+        </div>
+        <div class="kpi">
+          <div class="num">{{ orders|length }}</div>
+          <div class="label">订单数量</div>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <section class="card">
+          <header class="card-header">
+            <h3>账户信息</h3>
+          </header>
+          <div class="profile">
+            <div class="avatar">{{ profile.avatar }}</div>
+            <div>
+              <div>用户名：{{ request.user.username }}</div>
+              <div>手机号：{{ profile.phone|default:'未绑定' }}</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header class="card-header">
+            <h3>充值额度</h3>
+            <div class="card-sub">默认金额仅作示例，实际以生成二维码订单为准</div>
+          </header>
+          <div class="amount-pills">
+            <button type="button" class="pill active" data-amount="19.90">¥19.90</button>
+            <button type="button" class="pill" data-amount="49.90">¥49.90</button>
+            <button type="button" class="pill" data-amount="99.90">¥99.90</button>
+          </div>
+          <div class="input-group" style="margin-top:10px">
+            <input id="amount" class="input" placeholder="金额（元）" value="19.90" />
+            <button id="recharge-btn" class="btn solid" onclick="recharge()">去微信支付</button>
+          </div>
+          <div id="qrcode" style="margin-top:16px;text-align:center"></div>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top:18px">
+        <header class="card-header">
+          <h3>店铺密钥</h3>
+        </header>
+        <div style="overflow:auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width:80px">序号</th>
+                <th>店铺代码</th>
+                <th>密钥</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for sk in store_keys %}
+              <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ sk.store_code }}</td>
+                <td>
+                  <div class="secret-cell">
+                    <input id="secret-{{ sk.id }}" class="input secret-input" type="password" value="{{ sk.secret }}" readonly data-showing="0" />
+                    <button class="icon-btn" type="button" aria-label="显示密钥" onclick="toggleSecret('secret-{{ sk.id }}', this)">
+                      <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="3">暂无密钥</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:18px">
+        <header class="card-header">
+          <h3>已购产品 / 订单</h3>
+        </header>
+        <div style="overflow:auto">
+          <table class="table">
+            <thead><tr><th>订单号</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
+            <tbody>
+              {% for o in orders %}
+                <tr>
+                  <td>{{ o.order_no }}</td>
+                  <td>{{ o.amount }}</td>
+                  <td>{{ o.get_status_display }}</td>
+                  <td>{{ o.created_at }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="4">暂无订单</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="footer-actions">
+        <a href="/logout/">退出登录</a>
+      </div>
     </div>
-
-    <h3>已购产品/订单</h3>
-    <table class="table">
-      <thead><tr><th>订单号</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
-      <tbody>
-        {% for o in orders %}
-          <tr>
-            <td>{{ o.order_no }}</td>
-            <td>{{ o.amount }}</td>
-            <td>{{ o.get_status_display }}</td>
-            <td>{{ o.created_at }}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="4">暂无订单</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-
-    <p><a href="/logout/">退出登录</a></p>
-  </div>
+  </main>
 </body>
 </html>

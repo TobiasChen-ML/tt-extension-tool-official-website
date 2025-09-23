@@ -67,6 +67,26 @@ class UserInfo(models.Model):
     def __str__(self):
         return self.phone
 
+# ---------------- 新增：店铺密钥模型 ----------------
+class StoreKey(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='store_keys')  # 账户
+    store_code = models.CharField(max_length=100)  # 商店代号
+    secret = models.CharField(max_length=255)  # 密钥（建议加密存储，当前为明文字段）
+    created_at = models.DateTimeField(auto_now_add=True)  # 生成时间
+    sales_person = models.CharField(max_length=100, blank=True, default='')  # 销售人员
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['store_code']),
+        ]
+        unique_together = ('user', 'store_code')
+        verbose_name = 'Store Key'
+        verbose_name_plural = 'Store Keys'
+
+    def __str__(self):
+        return f"{self.user.username} - {self.store_code}"
+
 # ---------------- 本地词库系统（标准化表） ----------------
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)

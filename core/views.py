@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
-from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog
+from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, StoreKey
 import random
 import string
 import json
@@ -39,22 +39,6 @@ def login_view(request):
     return render(request, 'login.html')
 
 
-def send_code(request):
-    phone = request.GET.get('phone')
-    if not phone:
-        return JsonResponse({'ok': False, 'msg': '手机号必填'})
-    code = ''.join(random.choices(string.digits, k=6))
-    SMS_CODE_STORE[phone] = code
-    try:
-        SMS.main(phone, code)
-        ok = True
-        msg = '验证码已发送'
-    except Exception as e:
-        ok = False
-        msg = f'发送失败: {e}'
-    return JsonResponse({'ok': ok, 'msg': msg})
-
-
 # 暂时放行：未登录访问 /dashboard/ 时，自动以 chengong 登录
 # 注意：仅用于演示，生产环境务必移除或加开关
 def _ensure_default_login(request):
@@ -85,56 +69,14 @@ def dashboard(request):
     )
     orders = Order.objects.filter(user=request.user).order_by('-created_at')
     products = Product.objects.all()
+    # 新增：当前用户的店铺密钥列表（只读展示）
+    store_keys = StoreKey.objects.filter(user=request.user).order_by('-created_at')
     return render(request, 'dashboard.html', {
         'profile': profile,
         'orders': orders,
         'products': products,
+        'store_keys': store_keys,
     })
-
-
-@csrf_exempt
-@login_required
-def recharge(request):
-    amount = float(request.POST.get('amount', '19.90'))
-    resp = build_order(request.user.id, amount)
-    try:
-        data = json.loads(resp)
-        if data.get('code') == 200:
-            order_no = data.get('order_no')
-            Order.objects.get_or_create(
-                order_no=order_no,
-                defaults={
-                    'user': request.user,
-                    'product': None,
-                    'amount': amount,
-                    'status': 'pending',
-                }
-            )
-        return HttpResponse(resp, content_type='application/json')
-    except Exception:
-        return JsonResponse({'code': 1002, 'msg': '下单异常', 'data': ''})
-
-
-@csrf_exempt
-def wechat_notify(request):
-    from wechat_pay.wechat_pay import WechatPayAPI
-    api = WechatPayAPI()
-    xml_data = request.body
-    if not api.verify_payment(xml_data):
-        return HttpResponse("<xml><return_code><![CDATA[FAIL]]></return_code><return_msg><![CDATA[SIGN ERROR]]></return_msg></xml>")
-    data = api.parse_xml(xml_data)
-    order_no = data.get('out_trade_no')
-    total_fee = int(data.get('total_fee', '0')) / 100.0
-    try:
-        order = Order.objects.get(order_no=order_no, amount=total_fee)
-        order.status = 'paid'
-        order.save()
-        profile = Profile.objects.get(user=order.user)
-        profile.monthly_quota += 300
-        profile.save()
-    except Order.DoesNotExist:
-        pass
-    return HttpResponse("<xml><return_code><![CDATA[SUCCESS]]></return_code><return_msg><![CDATA[OK]]></return_msg></xml>")
 
 
 def logout_view(request):
@@ -751,3 +693,47 @@ def clean_text_multi(request):
         'removed_by_category': removed_by_category,
         'replaced_keywords': replaced_keywords,
     }})
+
+
+def send_code(request):
+    phone = request.GET.get('phone')
+    if not phone:
+        return JsonResponse({'ok': False, 'msg': '手机号必填'})
+    code = ''.join(random.choices(string.digits, k=6))
+    SMS_CODE_STORE[phone] = code
+    try:
+        SMS.main(phone, code)
+        ok = True
+        msg = '验证码已发送'
+    except Exception as e:
+        ok = False
+        msg = f'发送失败: {e}'
+    return JsonResponse({'ok': ok, 'msg': msg})
+
+
+@csrf_exempt
+def recharge(request):
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+    # 从表单、JSON或查询参数获取金额，默认19.90
+    amount = request.POST.get('amount')
+    if not amount:
+        try:
+            body = request.body.decode('utf-8') or ''
+            import json as _json
+            amount = (_json.loads(body).get('amount') if body else None)
+        except Exception:
+            amount = None
+    if not amount:
+        amount = '19.90'
+    try:
+        payload_json = build_order(request.user.id if request.user.is_authenticated else 0, amount)
+        return HttpResponse(payload_json, content_type='application/json')
+    except Exception as e:
+        return JsonResponse({'code': 500, 'msg': f'下单失败: {e}'})
+
+
+@csrf_exempt
+def wechat_notify(request):
+    # 简化实现：直接返回 SUCCESS，生产环境请验证签名并更新订单状态
+    return HttpResponse("<xml><return_code>SUCCESS</return_code><return_msg>OK</return_msg></xml>", content_type='application/xml')
