@@ -33,9 +33,9 @@ class Product(models.Model):
 
 class Order(models.Model):
     STATUS_CHOICES = (
-        ('pending','待支付'),
-        ('paid','已支付'),
-        ('failed','失败'),
+        ('pending','Pending'),
+        ('paid','Paid'),
+        ('failed','Failed'),
     )
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True)
@@ -48,76 +48,7 @@ class Order(models.Model):
         return f"{self.order_no} - {self.status}"
 
 # 词库与用户信息库
-class SensitiveWord(models.Model):
-    level1 = models.CharField(max_length=100, blank=True, default='')
-    level2 = models.CharField(max_length=100, blank=True, default='')
-    level3 = models.CharField(max_length=100, blank=True, default='')
-    word = models.CharField(max_length=200)
-    remark = models.CharField(max_length=255, blank=True, default='')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['word']),
-            models.Index(fields=['level1','level2','level3']),
-        ]
-        verbose_name = '敏感词'
-        verbose_name_plural = '敏感词库'
-
-    def __str__(self):
-        return self.word
-
-class BrandWord(models.Model):
-    category = models.CharField(max_length=100, blank=True, default='')  # 一级分类
-    word = models.CharField(max_length=200)
-    remark = models.CharField(max_length=255, blank=True, default='')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [models.Index(fields=['word']), models.Index(fields=['category'])]
-        verbose_name = '品牌词'
-        verbose_name_plural = '品牌词库'
-
-    def __str__(self):
-        return self.word
-
-class ForbiddenWord(models.Model):
-    level1 = models.CharField(max_length=100, blank=True, default='')
-    level2 = models.CharField(max_length=100, blank=True, default='')
-    level3 = models.CharField(max_length=100, blank=True, default='')
-    word = models.CharField(max_length=200)
-    remark = models.CharField(max_length=255, blank=True, default='')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['word']),
-            models.Index(fields=['level1','level2','level3']),
-        ]
-        verbose_name = '违禁词'
-        verbose_name_plural = '违禁词库'
-
-    def __str__(self):
-        return self.word
-
-class KeywordEntry(models.Model):
-    level1 = models.CharField(max_length=100, blank=True, default='')
-    level2 = models.CharField(max_length=100, blank=True, default='')
-    level3 = models.CharField(max_length=100, blank=True, default='')
-    word = models.CharField(max_length=200)
-    remark = models.CharField(max_length=255, blank=True, default='')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['word']),
-            models.Index(fields=['level1','level2','level3']),
-        ]
-        verbose_name = '关键词'
-        verbose_name_plural = '关键词库'
-
-    def __str__(self):
-        return self.word
+# 删除：SensitiveWord、BrandWord、KeywordEntry 模型
 
 class UserInfo(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
@@ -130,8 +61,8 @@ class UserInfo(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = '用户信息'
-        verbose_name_plural = '用户信息库'
+        verbose_name = 'User Info'
+        verbose_name_plural = 'User Info'
 
     def __str__(self):
         return self.phone
@@ -144,17 +75,17 @@ class Category(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = '词分类'
-        verbose_name_plural = '词分类'
+        verbose_name = 'Category'
+        verbose_name_plural = 'Categories'
 
     def __str__(self):
         return self.name
 
 class Word(models.Model):
     SEVERITY_CHOICES = (
-        (1, '低'),
-        (2, '中'),
-        (3, '高'),
+        (1, 'low'),
+        (2, 'medium'),
+        (3, 'high'),
     )
     word = models.CharField(max_length=200, unique=True)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='words')
@@ -165,8 +96,8 @@ class Word(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=['word'])]
-        verbose_name = '词条'
-        verbose_name_plural = '词条库'
+        verbose_name = 'Word'
+        verbose_name_plural = 'Words'
 
     def __str__(self):
         return self.word
@@ -178,8 +109,8 @@ class WordAlias(models.Model):
     class Meta:
         unique_together = ('word', 'alias')
         indexes = [models.Index(fields=['alias'])]
-        verbose_name = '词别名'
-        verbose_name_plural = '词别名'
+        verbose_name = 'Word Alias'
+        verbose_name_plural = 'Word Aliases'
 
     def __str__(self):
         return f"{self.alias} -> {self.word.word}"
@@ -191,8 +122,8 @@ class WordLog(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=['matched_at'])]
-        verbose_name = '词命中记录'
-        verbose_name_plural = '词命中记录'
+        verbose_name = 'Word Hit Log'
+        verbose_name_plural = 'Word Hit Logs'
 
     def __str__(self):
         return f"{self.word.word} @ {self.matched_at.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -203,7 +134,6 @@ def sync_word_to_fts(sender, instance: Word, **kwargs):
     try:
         with connection.cursor() as cursor:
             if instance.is_active:
-                # 将 Word.id 作为 rowid，便于后续精确删除/更新
                 cursor.execute("INSERT OR REPLACE INTO word_index(rowid, word) VALUES (?, ?)", [instance.id, instance.word])
             else:
                 cursor.execute("DELETE FROM word_index WHERE rowid = ?", [instance.id])
