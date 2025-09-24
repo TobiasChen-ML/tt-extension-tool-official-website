@@ -10,6 +10,8 @@ import random
 import string
 import json
 import os
+import difflib
+import requests
 from wechat_pay.pay import build_order
 from aliyun_sms import SMS
 from dotenv import load_dotenv
@@ -424,6 +426,12 @@ def analyze_text(request):
 # 检测图片是否含水印
 @csrf_exempt
 def image_is_watermark(request):
+    import base64
+    import os
+    import requests
+    import imghdr
+
+
     if request.method != 'POST':
         return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
 
@@ -431,40 +439,6 @@ def image_is_watermark(request):
     urls = data.get('image_urls') or data.get('urls')
     if not isinstance(urls, list) or not urls:
         return JsonResponse({'code': 400, 'msg': 'image_urls必须是非空数组'})
-
-    import os
-    import base64
-    import requests
-    import imghdr
-
-    deepseek_key = os.getenv('DEEPSEEK_API_KEY') or os.getenv('DEEPSEEK_APIKEY')
-  
-
-    try:
-        from langchain_openai import ChatOpenAI
-        from langchain_core.messages import SystemMessage, HumanMessage
-    except Exception:
-        return JsonResponse({'code': 500, 'msg': '缺少依赖，请安装: langchain, langchain-openai。并在环境变量配置DEEPSEEK_API_KEY或OPENAI_API_KEY'})
-
-    if not deepseek_key and not openai_key:
-        return JsonResponse({'code': 500, 'msg': '缺少API Key，请配置DEEPSEEK_API_KEY或OPENAI_API_KEY'})
-
-
-    model = ChatOpenAI(
-        model_name = "deepseek-chat",
-        openai_api_key = deepseek_key,
-        openai_api_base = "https://api.deepseek.com/v1"
-    )
-    system_prompt =  """You are an image watermark detector. Given a single image, decide if it contains a visible watermark 
-        such as stock-photo marks, semi-transparent text overlays, corner stamps, or company logos intended 
-        to prevent unauthorized use. Respond with exactly one word: 'yes' or 'no'."""
-    
-
-
-    
-
-    watermark_urls = []
-    errors = {}
 
     for url in urls:
         try:
@@ -479,14 +453,10 @@ def image_is_watermark(request):
             kind = imghdr.what(None, h=content) or 'jpeg'
             b64 = base64.b64encode(content).decode('ascii')
             data_url = f'data:image/{kind};base64,{b64}'
-            message = HumanMessage(
-                content = json.dumps([
-                    {"type":"text","text":f"{system_prompt}"},
-                    {"type":"image","image_url":{"url":data_url}},
-                ])
-            )
+            data_url = compress_b64_image(data_url)
 
-            response = model.invoke([message])
+
+            print(response.content)
             if response.content == 'yes':
                 watermark_urls.append(url)
         except Exception as e:
@@ -592,16 +562,15 @@ def clean_text_multi(request):
     POST /api/words/clean_multi
     body: {
       "text": "...",
-      "categories": ["forbidden","brand"],  # 可选，默认同时删除 forbidden 与 brand
-      "keywords": ["...", "..."],           # 可选，模糊匹配进行替换
-      "replace_with": "***"                   # 可选，关键词替换用的字符串，默认 ***
+      "categories": ["forbidden","brand"],  # 可选，默认同时处理 forbidden 与 brand
+      "keywords": ["...", "..."]             # 可选，按需求追加到文本末尾
     }
 
-    规则：
-    - categories：收集指定分类（词条 + 别名），大小写不敏感，按子串直接删除（替换为''），为避免短词影响长词，按长度降序处理；
-    - keywords：对提供的关键词进行大小写不敏感的子串匹配，将命中部分替换为 replace_with；
-    - 先执行分类删除，再执行关键词替换；
-    返回：cleaned_text、removed（按长度降序去重）、removed_by_category、replaced_keywords（含替换次数）。
+    新逻辑：
+    1) 获取到 text，先分词；
+    2) 每个 token 去模糊搜索违禁词、品牌词（词条与别名），对模糊搜索到的候选，用 DeepSeek API 判断候选词与该 token 是否为同义/等价；若是，则将该 token 在原文本中替换为 ''；
+    3) 关于 keywords：对每个关键词进行模糊搜索，选出最相关的一个词（若存在），将其追加到文本末尾；否则跳过。
+    返回：cleaned_text、removed_tokens（被删除的分词）、removed_by_category（按分类聚合）、appended_keywords（追加到末尾的词列表）。
     """
     if request.method != 'POST':
         return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
@@ -612,86 +581,153 @@ def clean_text_multi(request):
         return JsonResponse({'code': 400, 'msg': 'text不能为空'})
 
     # 解析参数
-    req_categories = data.get('categories') or [
-        'forbidden', 'brand'
-    ]
-    # 规范化为小写
+    req_categories = data.get('categories') or ['forbidden', 'brand']
     req_categories = [str(c).strip().lower() for c in req_categories if str(c).strip()]
     keywords = data.get('keywords') or []
     keywords = [str(k).strip() for k in keywords if str(k).strip()]
-    replace_with = data.get('replace_with')
-    if replace_with is None:
-        replace_with = '***'
-
-    # 收集分类词及别名，并建立反向映射（phrase -> category）
-    from django.db.models import Q
-    phrases = []
-    phrase_cat_map = {}
-
-    # 词条
-    word_qs = Word.objects.select_related('category').filter(
-        is_active=True,
-        category__name__in=req_categories
-    )
-    for w in word_qs:
-        s = (w.word or '').strip()
-        if s:
-            phrases.append(s)
-            phrase_cat_map.setdefault(s, w.category.name)
-    # 别名
-    alias_qs = WordAlias.objects.select_related('word__category').filter(
-        word__category__name__in=req_categories
-    )
-    for a in alias_qs:
-        s = (a.alias or '').strip()
-        if s:
-            phrases.append(s)
-            phrase_cat_map.setdefault(s, a.word.category.name)
-
-    # 去重 + 长度降序，避免短词优先导致重叠问题
-    uniq_phrases = sorted(set(p.strip() for p in phrases if p), key=lambda s: (-len(s), s.lower()))
 
     import re
+    from django.db.models import Q
+    # 分词：按非字母数字与撇号拆分，保留较有意义的 token（长度>=2）
+    tokens = [t.lower() for t in re.split(r"[^A-Za-z0-9']+", text) if len(t) >= 2]
+    uniq_tokens = sorted(set(tokens))
+
+    # DeepSeek API（OpenAI兼容）判断同义助手
+    DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
+    def _is_synonym(a: str, b: str) -> bool:
+        # 若未配置密钥，降级为严格相似度判断
+        a1 = (a or '').strip().lower()
+        b1 = (b or '').strip().lower()
+        if not a1 or not b1:
+            return False
+        # 先用本地相似度快速过滤，避免无意义调用
+        ratio = difflib.SequenceMatcher(None, a1, b1).ratio()
+        if ratio >= 0.92:
+            return True
+        if not DEEPSEEK_API_KEY:
+            return False
+        try:
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "You are a strict synonym/equivalence checker. Reply only 'yes' or 'no'."},
+                    {"role": "user", "content": f"Are '{a1}' and '{b1}' synonyms or representing the same brand/company/product? Answer yes or no."}
+                ],
+                "stream": False
+            }
+            headers = {
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=6)
+            if resp.status_code == 200:
+                jr = resp.json()
+                content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip().lower()
+                return content.startswith('y') or ('yes' in content)
+        except Exception:
+            # 网络或API错误时，不判定为同义
+            return False
+        return False
+
+    # 模糊搜索候选（按 token 局部匹配），返回 [(phrase, category, score)]
+    def _fuzzy_candidates(token: str):
+        cands = []
+        # 词条
+        w_qs = Word.objects.select_related('category').filter(
+            is_active=True,
+            category__name__in=req_categories,
+            word__icontains=token
+        )[:200]
+        for w in w_qs:
+            s = (w.word or '').strip()
+            if not s:
+                continue
+            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
+            cands.append((s, w.category.name.lower(), score))
+        # 别名
+        a_qs = WordAlias.objects.select_related('word__category').filter(
+            word__category__name__in=req_categories,
+            alias__icontains=token
+        )[:200]
+        for a in a_qs:
+            s = (a.alias or '').strip()
+            if not s:
+                continue
+            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
+            cands.append((s, a.word.category.name.lower(), score))
+        # 选取得分较高的前若干个
+        cands.sort(key=lambda x: (-x[2], -len(x[0]), x[0].lower()))
+        return cands[:5]
+
     cleaned = text
-    removed = []
+    removed_tokens = []
     removed_by_category = {c: [] for c in req_categories}
 
-    # 先执行分类词删除
-    for p in uniq_phrases:
-        if not p:
+    # 对每个 token：模糊搜索候选→DeepSeek判断同义→同义则删除该 token（按词边界）
+    for tk in uniq_tokens:
+        candidates = _fuzzy_candidates(tk)
+        # 仅当存在较相关候选时才尝试判断
+        if not candidates:
             continue
-        pattern = re.compile(re.escape(p), flags=re.IGNORECASE)
-        if pattern.search(cleaned):
-            cleaned = pattern.sub('', cleaned)
-            removed.append(p)
-            cat = phrase_cat_map.get(p)
-            if cat:
+        # 若任一候选与该token同义/等价，则删除该token
+        synonym_hit = None
+        for phrase, cat, score in candidates:
+            # 先做分数门槛（避免过低匹配触发API）
+            if score < 0.6:
+                continue
+            if _is_synonym(tk, phrase):
+                synonym_hit = (phrase, cat)
+                break
+        if synonym_hit:
+            pattern = re.compile(rf"\b{re.escape(tk)}\b", flags=re.IGNORECASE)
+            if pattern.search(cleaned):
+                cleaned = pattern.sub('', cleaned)
+                removed_tokens.append(tk)
+                cat = synonym_hit[1]
                 removed_by_category.setdefault(cat, [])
-                removed_by_category[cat].append(p)
+                removed_by_category[cat].append(tk)
 
-    # 再执行关键词替换（模糊子串，不区分大小写）
-    replaced_keywords = []
+    # 关键词：模糊搜索最相关词并追加到文本末尾
+    appended_keywords = []
+    def _best_match_for_keyword(kw: str):
+        cands = []
+        # 全库按子串匹配（词条+别名），不限定分类
+        w_qs = Word.objects.select_related('category').filter(is_active=True, word__icontains=kw)[:300]
+        for w in w_qs:
+            s = (w.word or '').strip()
+            if s:
+                cands.append((s, difflib.SequenceMatcher(None, kw.lower(), s.lower()).ratio()))
+        a_qs = WordAlias.objects.select_related('word__category').filter(alias__icontains=kw)[:300]
+        for a in a_qs:
+            s = (a.alias or '').strip()
+            if s:
+                cands.append((s, difflib.SequenceMatcher(None, kw.lower(), s.lower()).ratio()))
+        if not cands:
+            return None
+        cands.sort(key=lambda x: (-x[1], -len(x[0]), x[0].lower()))
+        best = cands[0]
+        return best if best[1] >= 0.6 else None
+
     for kw in keywords:
-        if not kw:
+        m = _best_match_for_keyword(kw)
+        if not m:
             continue
-        pattern = re.compile(re.escape(kw), flags=re.IGNORECASE)
-        # 统计替换次数：先找所有命中数
-        matches = list(pattern.finditer(cleaned))
-        count = len(matches)
-        if count > 0:
-            cleaned = pattern.sub(replace_with, cleaned)
-        replaced_keywords.append({'keyword': kw, 'count': count})
+        best_phrase = m[0]
+        # 末尾以空格追加一次
+        if best_phrase:
+            cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + best_phrase)
+            appended_keywords.append(best_phrase)
 
-    # 去重与排序（长度降序）
-    removed = sorted(set(removed), key=lambda s: (-len(s), s.lower()))
+    # 去重与排序清理
+    removed_tokens = sorted(set(removed_tokens), key=lambda s: (-len(s), s.lower()))
     for c in list(removed_by_category.keys()):
         removed_by_category[c] = sorted(set(removed_by_category[c]), key=lambda s: (-len(s), s.lower()))
-
+    print(f'cleaned_text: {cleaned}')
     return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
         'cleaned_text': cleaned,
-        'removed': removed,
+        'removed_tokens': removed_tokens,
         'removed_by_category': removed_by_category,
-        'replaced_keywords': replaced_keywords,
+        'appended_keywords': appended_keywords,
     }})
 
 
