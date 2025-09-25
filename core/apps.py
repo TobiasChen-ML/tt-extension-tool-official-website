@@ -34,9 +34,6 @@ class CoreConfig(AppConfig):
                 # 若底层SQLite不支持FTS5或迁移阶段，忽略错误
                 pass
 
-        # 启动时确保账号和FTS表存在
-        ensure_admin_user()
-        ensure_fts_table()
-        # 迁移完成后也确保账号和FTS表存在
+        # 仅在迁移完成后确保账号和FTS表存在，避免在 App 启动阶段访问数据库导致报错
         post_migrate.connect(ensure_admin_user, sender=self)
         post_migrate.connect(ensure_fts_table, sender=self)

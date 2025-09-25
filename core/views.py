@@ -562,15 +562,9 @@ def clean_text_multi(request):
     POST /api/words/clean_multi
     body: {
       "text": "...",
-      "categories": ["forbidden","brand"],  # 可选，默认同时处理 forbidden 与 brand
-      "keywords": ["...", "..."]             # 可选，按需求追加到文本末尾
+      "categories": ["forbidden","brand","keyword"],
+      "hotwords": ""  # 新增，可选，默认为空字符串
     }
-
-    新逻辑：
-    1) 获取到 text，先分词；
-    2) 每个 token 去模糊搜索违禁词、品牌词（词条与别名），对模糊搜索到的候选，用 DeepSeek API 判断候选词与该 token 是否为同义/等价；若是，则将该 token 在原文本中替换为 ''；
-    3) 关于 keywords：对每个关键词进行模糊搜索，选出最相关的一个词（若存在），将其追加到文本末尾；否则跳过。
-    返回：cleaned_text、removed_tokens（被删除的分词）、removed_by_category（按分类聚合）、appended_keywords（追加到末尾的词列表）。
     """
     if request.method != 'POST':
         return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
@@ -580,11 +574,15 @@ def clean_text_multi(request):
     if not text.strip():
         return JsonResponse({'code': 400, 'msg': 'text不能为空'})
 
+    # 新增：热词参数，默认空字符串
+    hotwords = str(data.get('hotwords', '') or '').strip()
+
     # 解析参数
-    req_categories = data.get('categories') or ['forbidden', 'brand']
+    req_categories = data.get('categories') or ['forbidden', 'brand', 'keyword']
     req_categories = [str(c).strip().lower() for c in req_categories if str(c).strip()]
-    keywords = data.get('keywords') or []
-    keywords = [str(k).strip() for k in keywords if str(k).strip()]
+    # 若 hotwords 非空，则移除 keyword 类别，不执行 keyword 相关逻辑
+    if hotwords:
+        req_categories = [c for c in req_categories if c != 'keyword']
 
     import re
     from django.db.models import Q
@@ -675,7 +673,8 @@ def clean_text_multi(request):
             # 先做分数门槛（避免过低匹配触发API）
             if score < 0.6:
                 continue
-            if _is_synonym(tk, phrase):
+            # 仅对 forbidden 执行删除（品牌改为通过 DeepSeek 整体识别后统一删除）
+            if cat in ('forbidden',) and _is_synonym(tk, phrase):
                 synonym_hit = (phrase, cat)
                 break
         if synonym_hit:
@@ -687,42 +686,193 @@ def clean_text_multi(request):
                 removed_by_category.setdefault(cat, [])
                 removed_by_category[cat].append(tk)
 
-    # 关键词：模糊搜索最相关词并追加到文本末尾
+    # 品牌词：调用 DeepSeek API 从整段文本中抽取品牌词，并统一从原文本中移除
+    def _extract_brands_with_deepseek(full_text: str):
+        api_key = os.getenv('DEEPSEEK_API_KEY', '')
+        if not api_key or not (full_text or '').strip():
+            return []
+        try:
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "你是一个严格的品牌词抽取器。必须100%确认是品牌词才能提取，宁可漏判不可误判。，返回JSON数组。"},
+                    {"role": "user", "content": (
+                        "请从下面文本中找出品牌词，规则："
+                        "1) 排除规则优先：以下情况绝对不是品牌词："
+                        "   - 通用产品名称（如knife, tool, drill, machine等）"
+                        "   - 产品特性描述（如rainbow, cute, small, legal等）"
+                        "   - 产品用途描述（如self defense, camping, EDC等）"
+                        "   - 含数字的型号代码（如6655 R）"
+                        "   - 目标人群（如women, womens）"
+                        "   - 节日/场合（如birthday, gifts）"
+                        ""
+                        "2) 品牌词特征（必须同时满足）："
+                        "   - 是专有名词，不是普通英文单词"
+                        "   - 在商业语境中已知是品牌名称"
+                        "   - 无法自然地直译成中文"
+                        "   - 不包含产品功能描述"
+                        ""
+                        "3) 严格标准："
+                        "   - 如果不确定100%是品牌词，就排除"
+                        "   - 只提取明确知名的品牌名称"
+                        "   - 不要猜测或推断品牌"
+                        "4) 输出格式：严格返回JSON：{\"brands\": [\"brand1\", \"brand2\"]}，如果没有品牌词就返回空数组"
+                        f"文本：{full_text}"
+                    )}
+                ],
+                "stream": False
+            }
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=8)
+            if resp.status_code != 200:
+                return []
+            jr = resp.json()
+            content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip()
+            import json as _json
+            brands = []
+            try:
+                obj = _json.loads(content)
+                if isinstance(obj, dict) and isinstance(obj.get('brands'), list):
+                    brands = [str(x).strip() for x in obj.get('brands') if str(x).strip()]
+                elif isinstance(obj, list):
+                    brands = [str(x).strip() for x in obj if str(x).strip()]
+            except Exception:
+                # 宽松解析：逗号/换行分隔
+                parts = [p.strip() for p in re.split(r"[,]", content) if p.strip()]
+                brands = parts
+            # 过滤掉全数字/主要为数字的项
+            def _is_mostly_digits(s: str):
+                digits = sum(ch.isdigit() for ch in s)
+                return digits >= max(3, len(s) * 0.6)
+            brands = [b for b in brands if len(b) >= 2 and not _is_mostly_digits(b)]
+            return brands
+        except Exception:
+            return []
+
+    if 'brand' in req_categories:
+        brands = _extract_brands_with_deepseek(text)
+        if brands:
+            # 按长度降序移除，避免子串影响
+            phrases = sorted(set(b for b in brands if b), key=lambda s: (-len(s.strip()), s.lower()))
+            for p in phrases:
+                if not p:
+                    continue
+                # 使用词边界匹配，避免删除非品牌词的子串（如 Pineapple 中的 apple）
+                pattern = re.compile(rf"\b{re.escape(p)}\b", flags=re.IGNORECASE)
+                if pattern.search(cleaned):
+                    cleaned = pattern.sub('', cleaned)
+                    removed_tokens.append(p)
+                    removed_by_category.setdefault('brand', [])
+                    removed_by_category['brand'].append(p)
+
+    # 关键词：基于分词在 keyword 类别中模糊搜索最相关词并追加到文本末尾
     appended_keywords = []
-    def _best_match_for_keyword(kw: str):
+
+    def _best_keyword_for_token(token: str):
         cands = []
-        # 全库按子串匹配（词条+别名），不限定分类
-        w_qs = Word.objects.select_related('category').filter(is_active=True, word__icontains=kw)[:300]
+        # 仅在 keyword 分类中查找
+        w_qs = Word.objects.select_related('category').filter(
+            is_active=True, category__name__iexact='keyword', word__icontains=token
+        )[:300]
         for w in w_qs:
             s = (w.word or '').strip()
             if s:
-                cands.append((s, difflib.SequenceMatcher(None, kw.lower(), s.lower()).ratio()))
-        a_qs = WordAlias.objects.select_related('word__category').filter(alias__icontains=kw)[:300]
+                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
+        a_qs = WordAlias.objects.select_related('word__category').filter(
+            word__category__name__iexact='keyword', alias__icontains=token
+        )[:300]
         for a in a_qs:
             s = (a.alias or '').strip()
             if s:
-                cands.append((s, difflib.SequenceMatcher(None, kw.lower(), s.lower()).ratio()))
+                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
         if not cands:
             return None
         cands.sort(key=lambda x: (-x[1], -len(x[0]), x[0].lower()))
         best = cands[0]
         return best if best[1] >= 0.6 else None
 
-    for kw in keywords:
-        m = _best_match_for_keyword(kw)
-        if not m:
-            continue
-        best_phrase = m[0]
-        # 末尾以空格追加一次
-        if best_phrase:
-            cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + best_phrase)
-            appended_keywords.append(best_phrase)
+    # 仅对未被删除的 token 做关键词追加，降低噪声
+    tokens_for_keywords = [t for t in uniq_tokens if t not in set(removed_tokens)]
+    if 'keyword' in req_categories:
+        for tk in tokens_for_keywords:
+            m = _best_keyword_for_token(tk)
+            if not m:
+                continue
+            best_phrase = m[0]
+            if best_phrase and best_phrase.lower() not in [x.lower() for x in appended_keywords]:
+                # 末尾以空格追加一次
+                cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + best_phrase)
+                appended_keywords.append(best_phrase)
+
+    # 新增：在程序末尾确保 hotwords 中每个词都包含在 cleaned 中
+    if hotwords:
+        for w in [x for x in hotwords.split(' ') if x.strip()]:
+            # 用词边界判断是否已存在，避免子串误判
+            if not re.search(rf"\b{re.escape(w)}\b", cleaned, flags=re.IGNORECASE):
+                cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + w)
 
     # 去重与排序清理
     removed_tokens = sorted(set(removed_tokens), key=lambda s: (-len(s), s.lower()))
     for c in list(removed_by_category.keys()):
         removed_by_category[c] = sorted(set(removed_by_category[c]), key=lambda s: (-len(s), s.lower()))
-    print(f'cleaned_text: {cleaned}')
+
+    # 智能长度裁剪：确保 cleaned_text 不超过 255 字符
+    def _smart_trim(text: str):
+        if len(text) <= 250:
+            return text
+        import re
+        # 分词，保留原大小写用于保留度判断
+        tokens = [t for t in re.split(r"[^A-Za-z0-9']+", text) if len(t) >= 1]
+        if not tokens:
+            return text[:250]
+        # 停用词（英文常见介词/连词/语气词）
+        stopwords = {
+            'a','an','the','and','or','but','if','then','than','so','too','very','just','really','quite','rather','some','any',
+            'in','on','at','by','for','to','of','from','with','without','about','into','over','under','between','among','through','during',
+            'up','down','out','off','again','still','ever','never','not','no','yes','as','is','are','was','were','be','been','being',
+            'this','that','these','those','here','there','now','today','yesterday','tomorrow','i','you','he','she','it','we','they'
+        }
+        # 计算每个词的重要度：是否为关键词、是否在 removed_tokens 中、长度、是否停用词
+        import collections
+        Counter = collections.Counter
+        freq = Counter([t.lower() for t in tokens])
+        # 保护已追加的关键词与 hotwords（若存在），避免被裁剪优先移除
+        appended_set = {k.lower() for k in appended_keywords} | {w.lower() for w in (hotwords.split(' ') if hotwords else []) if w.strip()}
+        removed_set = {k.lower() for k in removed_tokens}
+        def importance(t: str):
+            tl = t.lower()
+            score = 0
+            # 关键词/热词加权
+            if tl in appended_set:
+                score += 3
+            # 被删除过的词（通常是敏感/品牌）若仍出现，避免误删，适度加权
+            if tl in removed_set:
+                score += 2
+            # 词长、频次
+            score += min(len(t), 10) * 0.3
+            score += min(freq[tl], 5) * 0.5
+            # 停用词降权
+            if tl in stopwords:
+                score -= 3
+            return score
+        # 生成移除顺序：先删除重要度低的、再短的、再频次低的
+        order = sorted([(t, importance(t)) for t in tokens], key=lambda x: (x[1], len(x[0]), freq[x[0].lower()]))
+        # 逐步移除词（仅在文本中替换一次），直到长度<=255
+        trimmed = text
+        for t, _ in order:
+            if len(trimmed) <= 255:
+                break
+            # 以词边界移除一次出现，避免数字/撇号破坏
+            pattern = re.compile(rf"\b{re.escape(t)}\b")
+            trimmed_new = pattern.sub('', trimmed, count=1)
+            if trimmed_new != trimmed:
+                trimmed = trimmed_new
+        # 如果仍超长，做末尾截断（保留完整词边界尽量）
+        return trimmed[:255]
+
+    # 移除amazon相关字符(不区分大小写)
+    cleaned = _smart_trim(cleaned).replace('amazon', '').replace('AMAZON', '').replace('Amazon', '')
+
     return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
         'cleaned_text': cleaned,
         'removed_tokens': removed_tokens,
