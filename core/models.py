@@ -168,3 +168,40 @@ def remove_word_from_fts(sender, instance: Word, **kwargs):
             cursor.execute("DELETE FROM word_index WHERE rowid = ?", [instance.id])
     except Exception:
         pass
+
+# ---------------- 调用使用日志 ----------------
+class UsageLog(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)  # 时间
+    points_consumed = models.IntegerField(default=0)  # 消耗多少积分
+    content = models.TextField(blank=True, default='')  # 接口（内容）
+    store_code = models.CharField(max_length=100, blank=True, default='')  # 店铺代码
+    status = models.CharField(max_length=10, choices=(('success','success'),('failure','failure')), default='success')  # 状态
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['created_at']),
+            models.Index(fields=['store_code']),
+        ]
+        verbose_name = 'Usage Log'
+        verbose_name_plural = 'Usage Logs'
+
+    def __str__(self):
+        return f"{self.created_at.strftime('%Y-%m-%d %H:%M:%S')} - {self.store_code} - {self.points_consumed} - {self.status}"
+
+# ---------------- 新增：积分模型 ----------------
+class PointsBalance(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='points')
+    store_code = models.CharField(max_length=100)
+    points = models.PositiveIntegerField(default=0)  # 剩余积分
+
+    class Meta:
+        unique_together = ('user', 'store_code')
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['store_code']),
+        ]
+        verbose_name = 'Points Balance'
+        verbose_name_plural = 'Points Balances'
+
+    def __str__(self):
+        return f"{self.user.username} - {self.store_code}: {self.points}"

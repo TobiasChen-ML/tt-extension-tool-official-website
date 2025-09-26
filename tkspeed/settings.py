@@ -80,3 +80,8 @@ WECHAT_PAY_NOTIFY_URL = os.getenv('WECHAT_PAY_NOTIFY_URL', '')
 CREATE_IP = os.getenv('CREATE_IP', '127.0.0.1')
 UFDODER_URL = os.getenv('UFDODER_URL', 'https://api.mch.weixin.qq.com/pay/unifiedorder')
 DOMAIN_NAME = os.getenv('DOMAIN_NAME', 'http://localhost:8000')
+
+# Session settings for long-lived login
+SESSION_COOKIE_AGE = int(os.getenv('SESSION_COOKIE_AGE', str(60 * 60 * 24 * 90)))  # 90 天
+SESSION_SAVE_EVERY_REQUEST = True  # 每次请求刷新过期时间
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False  # 关闭浏览器不退出登录

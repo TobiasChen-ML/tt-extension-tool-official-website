@@ -8,6 +8,7 @@ class CoreConfig(AppConfig):
         from django.db.models.signals import post_migrate
         from django.contrib.auth import get_user_model
         from django.db import connection
+        from django.conf import settings
 
         def ensure_admin_user(sender=None, **kwargs):
             User = get_user_model()
@@ -35,5 +36,6 @@ class CoreConfig(AppConfig):
                 pass
 
         # 仅在迁移完成后确保账号和FTS表存在，避免在 App 启动阶段访问数据库导致报错
-        post_migrate.connect(ensure_admin_user, sender=self)
+        if getattr(settings, 'DEBUG', False):
+            post_migrate.connect(ensure_admin_user, sender=self)
         post_migrate.connect(ensure_fts_table, sender=self)

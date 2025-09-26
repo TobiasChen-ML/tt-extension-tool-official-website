@@ -5,14 +5,14 @@ from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
-from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, StoreKey
+from django.db import models
+from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, StoreKey, PointsBalance, UsageLog
 import random
 import string
 import json
 import os
 import difflib
 import requests
-from wechat_pay.pay import build_order
 from aliyun_sms import SMS
 from dotenv import load_dotenv
 load_dotenv()
@@ -36,34 +36,21 @@ def login_view(request):
         user, created = User.objects.get_or_create(username=phone)
         if created:
             Profile.objects.create(user=user, phone=phone)
-        login(request, user)
+        login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+        # 设置较长的会话有效期（优先使用全局配置，否则默认90天）
+        try:
+            request.session.set_expiry(getattr(settings, 'SESSION_COOKIE_AGE', 60*60*24*90))
+        except Exception:
+            pass
         return redirect('dashboard')
     return render(request, 'login.html')
 
 
-# 暂时放行：未登录访问 /dashboard/ 时，自动以 chengong 登录
-# 注意：仅用于演示，生产环境务必移除或加开关
-def _ensure_default_login(request):
-    try:
-        # 若已登录，也要确保 Profile 存在
-        if request.user.is_authenticated:
-            if not Profile.objects.filter(user=request.user).exists():
-                Profile.objects.create(user=request.user, phone=getattr(request.user, 'username', '') or '')
-            return
-        # 未登录则使用默认账号自动登录
-        user = User.objects.filter(username='chengong').first()
-        if not user:
-            user = User.objects.create_superuser('chengong', email='', password='chengong123')
-        if not Profile.objects.filter(user=user).exists():
-            Profile.objects.create(user=user, phone='13800000000')
-        login(request, user, backend='django.contrib.auth.backends.ModelBackend')
-    except Exception:
-        pass
+# 已移除自动登录逻辑，统一使用手机号+验证码登录
 
 
-# 移除@login_required，确保自动登录逻辑先执行
+@login_required
 def dashboard(request):
-    _ensure_default_login(request)
     # 确保当前用户一定有 Profile
     profile, _ = Profile.objects.get_or_create(
         user=request.user,
@@ -73,11 +60,19 @@ def dashboard(request):
     products = Product.objects.all()
     # 新增：当前用户的店铺密钥列表（只读展示）
     store_keys = StoreKey.objects.filter(user=request.user).order_by('-created_at')
+    # 新增：剩余积分（汇总当前用户所有店铺）
+    points_qs = PointsBalance.objects.filter(user=request.user)
+    points_total = points_qs.aggregate(total=models.Sum('points')).get('total') or 0
+    # 新增：调用日志（按该用户关联店铺代码筛选）
+    store_codes = list(store_keys.values_list('store_code', flat=True))
+    usage_logs = UsageLog.objects.filter(store_code__in=store_codes).order_by('-created_at')[:100]
     return render(request, 'dashboard.html', {
         'profile': profile,
         'orders': orders,
         'products': products,
         'store_keys': store_keys,
+        'points_total': points_total,
+        'usage_logs': usage_logs,
     })
 
 
@@ -209,6 +204,43 @@ word_log_mapper = lambda o: {
     'context': o.context,
     'matched_at': o.matched_at.strftime('%Y-%m-%d %H:%M:%S'),
 }
+
+# 新增：调整用户积分接口
+@csrf_exempt
+def adjust_points(request):
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+    # 需要登录
+    if not request.user.is_authenticated:
+        return JsonResponse({'code': 401, 'msg': '未登录'})
+    data = parse_json(request)
+    store_code = (data.get('store_code') or '').strip()
+    try:
+        delta = int(data.get('delta'))
+    except Exception:
+        return JsonResponse({'code': 400, 'msg': '参数错误：delta 必须是整数'})
+    if not store_code:
+        return JsonResponse({'code': 400, 'msg': '缺少 store_code'})
+    # 仅允许操作当前用户拥有的店铺
+    if not StoreKey.objects.filter(user=request.user, store_code=store_code).exists():
+        return JsonResponse({'code': 403, 'msg': '无权操作该店铺'})
+    pb, _ = PointsBalance.objects.get_or_create(user=request.user, store_code=store_code)
+    new_points = pb.points + delta
+    if new_points < 0:
+        return JsonResponse({'code': 400, 'msg': '积分不足，无法扣减'})
+    pb.points = new_points
+    pb.save()
+    # 写入调用日志（调整积分不消耗积分，记录状态）
+    try:
+        UsageLog.objects.create(
+            points_consumed=0,
+            content=f"adjust_points delta={delta}",
+            store_code=store_code,
+            status='success'
+        )
+    except Exception:
+        pass
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'store_code': store_code, 'points': pb.points}})
 
 # 分类 API
 @csrf_exempt
@@ -577,8 +609,22 @@ def clean_text_multi(request):
     # 新增：热词参数，默认空字符串
     hotwords = str(data.get('hotwords', '') or '').strip()
 
+    # 新增：当 categories 为空列表时，直接返回原文本与空结果
+    categories_param = data.get('categories')
+    if isinstance(categories_param, list) and len(categories_param) == 0:
+        cleaned = text
+        removed_tokens = []
+        removed_by_category = []
+        appended_keywords = []
+        return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
+            'cleaned_text': cleaned,
+            'removed_tokens': removed_tokens,
+            'removed_by_category': removed_by_category,
+            'appended_keywords': appended_keywords,
+        }})
+
     # 解析参数
-    req_categories = data.get('categories') or ['forbidden', 'brand', 'keyword']
+    req_categories = categories_param or ['forbidden', 'brand', 'keyword']
     req_categories = [str(c).strip().lower() for c in req_categories if str(c).strip()]
     # 若 hotwords 非空，则移除 keyword 类别，不执行 keyword 相关逻辑
     if hotwords:
@@ -715,7 +761,7 @@ def clean_text_multi(request):
                         ""
                         "3) 严格标准："
                         "   - 如果不确定100%是品牌词，就排除"
-                        "   - 只提取明确知名的品牌名称"
+                        "   - 只提取明确知名品牌的品牌名称"
                         "   - 不要猜测或推断品牌"
                         "4) 输出格式：严格返回JSON：{\"brands\": [\"brand1\", \"brand2\"]}，如果没有品牌词就返回空数组"
                         f"文本：{full_text}"
@@ -871,8 +917,11 @@ def clean_text_multi(request):
         # 如果仍超长，做末尾截断（保留完整词边界尽量）
         return trimmed[:255]
 
+    # 根据 hotwords 非空决定是否进行长度裁剪到255
+    if hotwords:
+        cleaned = _smart_trim(cleaned)
     # 移除amazon相关字符(不区分大小写)
-    cleaned = _smart_trim(cleaned).replace('amazon', '').replace('AMAZON', '').replace('Amazon', '')
+    cleaned = cleaned.replace('amazon', '').replace('AMAZON', '').replace('Amazon', '')
 
     return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
         'cleaned_text': cleaned,
@@ -920,7 +969,3 @@ def recharge(request):
         return JsonResponse({'code': 500, 'msg': f'下单失败: {e}'})
 
 
-@csrf_exempt
-def wechat_notify(request):
-    # 简化实现：直接返回 SUCCESS，生产环境请验证签名并更新订单状态
-    return HttpResponse("<xml><return_code>SUCCESS</return_code><return_msg>OK</return_msg></xml>", content_type='application/xml')

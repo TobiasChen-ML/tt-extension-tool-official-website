@@ -6,33 +6,6 @@
   <title>控制台 - TK加速器</title>
   <link rel="stylesheet" href="/static/site.css" />
   <script>
-    async function recharge(){
-      const amount = document.getElementById('amount').value || '19.90';
-      const btn = document.getElementById('recharge-btn');
-      btn.disabled = true; btn.textContent = '下单中...';
-      try{
-        const res = await fetch('/recharge/', {method:'POST', headers:{'X-CSRFToken': '{{ csrf_token }}'}});
-        const data = await res.json();
-        if(data.code === 200){
-          document.getElementById('qrcode').innerHTML = `<img src="${data.data}" alt="二维码" style="width:220px;height:220px;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.12)"/>`;
-        } else {
-          alert(data.msg || '下单失败');
-        }
-      }catch(e){
-        alert('网络异常，请稍后重试');
-      }finally{
-        btn.disabled = false; btn.textContent = '去微信支付';
-      }
-    }
-    document.addEventListener('click', function(e){
-      const pill = e.target.closest('[data-amount]');
-      if(!pill) return;
-      const v = pill.getAttribute('data-amount');
-      const input = document.getElementById('amount');
-      input.value = v;
-      document.querySelectorAll('[data-amount]').forEach(el=>el.classList.remove('active'));
-      pill.classList.add('active');
-    });
     function toggleSecret(id, btn){
       const input = document.getElementById(id);
       if(!input) return;
@@ -73,18 +46,14 @@
       <div class="dash-header">
         <div>
           <h1 class="dash-title">欢迎，{{ request.user.username }}</h1>
-          <p class="dash-sub">在这里管理您的账户、充值额度、查看订单与使用情况</p>
+          <p class="dash-sub">在这里管理您的账户、店铺密钥、查看订单与使用情况</p>
         </div>
       </div>
 
       <div class="metric-row">
         <div class="kpi">
-          <div class="num">{{ profile.monthly_quota }}</div>
-          <div class="label">本月额度（次）</div>
-        </div>
-        <div class="kpi">
-          <div class="num">{{ profile.quota_used }}</div>
-          <div class="label">本月已使用（次）</div>
+          <div class="num">{{ points_total }}</div>
+          <div class="label">剩余积分</div>
         </div>
         <div class="kpi">
           <div class="num">{{ profile.phone|default:'未绑定' }}</div>
@@ -99,6 +68,46 @@
       <div class="dash-grid">
         <section class="card">
           <header class="card-header">
+            <h3>店铺密钥</h3>
+          </header>
+          <div style="overflow:auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width:80px">序号</th>
+                  <th>店铺代码</th>
+                  <th>密钥</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for sk in store_keys %}
+                <tr>
+                  <td>{{ forloop.counter }}</td>
+                  <td>{{ sk.store_code }}</td>
+                  <td>
+                    <div class="secret-cell">
+                      <input id="secret-{{ sk.id }}" class="input secret-input" type="password" value="{{ sk.secret }}" readonly data-showing="0" />
+                      <button class="icon-btn" type="button" aria-label="显示密钥" onclick="toggleSecret('secret-{{ sk.id }}', this)">
+                        <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
+                          <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {% empty %}
+                <tr>
+                  <td colspan="3">暂无密钥</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <header class="card-header">
             <h3>账户信息</h3>
           </header>
           <div class="profile">
@@ -109,64 +118,7 @@
             </div>
           </div>
         </section>
-
-        <section class="card">
-          <header class="card-header">
-            <h3>充值额度</h3>
-            <div class="card-sub">默认金额仅作示例，实际以生成二维码订单为准</div>
-          </header>
-          <div class="amount-pills">
-            <button type="button" class="pill active" data-amount="19.90">¥19.90</button>
-            <button type="button" class="pill" data-amount="49.90">¥49.90</button>
-            <button type="button" class="pill" data-amount="99.90">¥99.90</button>
-          </div>
-          <div class="input-group" style="margin-top:10px">
-            <input id="amount" class="input" placeholder="金额（元）" value="19.90" />
-            <button id="recharge-btn" class="btn solid" onclick="recharge()">去微信支付</button>
-          </div>
-          <div id="qrcode" style="margin-top:16px;text-align:center"></div>
-        </section>
       </div>
-
-      <section class="card" style="margin-top:18px">
-        <header class="card-header">
-          <h3>店铺密钥</h3>
-        </header>
-        <div style="overflow:auto">
-          <table class="table">
-            <thead>
-              <tr>
-                <th style="width:80px">序号</th>
-                <th>店铺代码</th>
-                <th>密钥</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for sk in store_keys %}
-              <tr>
-                <td>{{ forloop.counter }}</td>
-                <td>{{ sk.store_code }}</td>
-                <td>
-                  <div class="secret-cell">
-                    <input id="secret-{{ sk.id }}" class="input secret-input" type="password" value="{{ sk.secret }}" readonly data-showing="0" />
-                    <button class="icon-btn" type="button" aria-label="显示密钥" onclick="toggleSecret('secret-{{ sk.id }}', this)">
-                      <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
-                        <circle cx="12" cy="12" r="3"></circle>
-                      </svg>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              {% empty %}
-              <tr>
-                <td colspan="3">暂无密钥</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
       <section class="card" style="margin-top:18px">
         <header class="card-header">
@@ -185,6 +137,41 @@
                 </tr>
               {% empty %}
                 <tr><td colspan="4">暂无订单</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:18px">
+        <header class="card-header">
+          <h3>调用日志</h3>
+          <div class="card-sub">最近100条</div>
+        </header>
+        <div style="overflow:auto">
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width:120px">时间</th>
+                <th>接口内容</th>
+                <th style="width:140px">店铺代码</th>
+                <th style="width:120px">消耗积分</th>
+                <th style="width:100px">状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for log in usage_logs %}
+              <tr>
+                <td>{{ log.created_at|date:'Y-m-d H:i:s' }}</td>
+                <td>{{ log.content }}</td>
+                <td>{{ log.store_code }}</td>
+                <td>{{ log.points_consumed }}</td>
+                <td>{{ log.status }}</td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="5">暂无调用日志</td>
+              </tr>
               {% endfor %}
             </tbody>
           </table>

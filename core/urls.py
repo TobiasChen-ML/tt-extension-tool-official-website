@@ -8,7 +8,6 @@ urlpatterns = [
     path('logout/', views.logout_view, name='logout'),
     path('dashboard/', views.dashboard, name='dashboard'),
     path('recharge/', views.recharge, name='recharge'),
-    path('wechat/notify/', views.wechat_notify, name='wechat_notify'),
 
     # 标准化词库 APIs
     path('api/categories/', views.categories, name='categories'),
@@ -19,6 +18,9 @@ urlpatterns = [
     path('api/words/rm_brand', views.rm_brand),
     path('api/words/clean_multi', views.clean_text_multi),
     path('api/analyze-text', views.analyze_text, name='analyze_text'),
+
+    # 新增：积分调整接口
+    path('api/points/adjust', views.adjust_points, name='adjust_points'),
 
     # 用户信息
     path('api/user-infos/', views.user_infos, name='user_infos'),

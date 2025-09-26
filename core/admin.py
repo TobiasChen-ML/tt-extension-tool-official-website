@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog
+from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, UsageLog, PointsBalance
 
 
 @admin.register(Profile)
@@ -53,3 +53,16 @@ class WordAliasAdmin(admin.ModelAdmin):
 class WordLogAdmin(admin.ModelAdmin):
     list_display = ('word', 'context', 'matched_at')
     search_fields = ('context', 'word__word')
+
+
+@admin.register(UsageLog)
+class UsageLogAdmin(admin.ModelAdmin):
+    list_display = ('created_at', 'content', 'store_code', 'points_consumed', 'status')
+    search_fields = ('content', 'store_code')
+    list_filter = ('status',)
+
+
+@admin.register(PointsBalance)
+class PointsBalanceAdmin(admin.ModelAdmin):
+    list_display = ('user', 'store_code', 'points')
+    search_fields = ('user__username', 'store_code')
