@@ -27,9 +27,9 @@ def random_str(randomlength=8):
 
 def build_order(user_id,amount):
     total_price = amount  # 订单总价
-    order_name = 'VectorizerCN-API-SERVICE'   # 订单名字
+    order_name = 'TK 灵犀-API-SERVICE'   # 订单名字
+    order_detail = "TK 灵犀-API-SERVICE"
     order_id = random_str(16)    # 自定义的订单号
-    order_detail = "VectorizerCN-API-SERVICE"
     data_dict = wxpay(order_id, order_name, order_detail, total_price)   # 调用统一支付接口
     print(data_dict)
     # 如果请求成功

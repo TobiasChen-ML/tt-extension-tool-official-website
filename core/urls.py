@@ -25,4 +25,14 @@ urlpatterns = [
     # 用户信息
     path('api/user-infos/', views.user_infos, name='user_infos'),
     path('api/image/is_watermark/', views.image_is_watermark, name='image_is_watermark'),
+    path('super/settings/', views.super_settings, name='super_settings'),
+
+    # 新增：商品词分类与提取
+    path('api/words/classification', views.words_classification),
+
+    # 新增：建议收集接口
+    path('api/suggestion', views.suggestion),
+
+    # 新增：客户有效性校验接口
+    path('api/is_valid_customer', views.is_valid_customer),
 ]

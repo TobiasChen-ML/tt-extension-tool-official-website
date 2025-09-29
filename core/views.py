@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.db import models
-from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, StoreKey, PointsBalance, UsageLog
+from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, StoreKey, PointsBalance, UsageLog, Suggestion, Trial
 import random
 import string
 import json
@@ -65,7 +65,7 @@ def dashboard(request):
     points_total = points_qs.aggregate(total=models.Sum('points')).get('total') or 0
     # 新增：调用日志（按该用户关联店铺代码筛选）
     store_codes = list(store_keys.values_list('store_code', flat=True))
-    usage_logs = UsageLog.objects.filter(store_code__in=store_codes).order_by('-created_at')[:100]
+    usage_logs = UsageLog.objects.filter(user=request.user, store_code__in=store_codes).order_by('-created_at')[:100]
     return render(request, 'dashboard.html', {
         'profile': profile,
         'orders': orders,
@@ -89,6 +89,108 @@ def parse_json(request):
     except Exception:
         return {}
 
+@csrf_exempt
+def words_classification(request):
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+    data = parse_json(request)
+    # 更健壮的请求体处理，支持对象/数组/字符串
+    if isinstance(data, dict):
+        hotwords = data.get('hotwords') or []
+    elif isinstance(data, list):
+        hotwords = data
+    elif isinstance(data, str):
+        hotwords = [data]
+    else:
+        hotwords = []
+    if not isinstance(hotwords, list) or not hotwords:
+        return JsonResponse({'code': 400, 'msg': 'hotwords 必须为非空数组'})
+    # DeepSeek 尝试
+    
+    api_key = os.getenv('DEEPSEEK_API_KEY') or getattr(settings, 'DEEPSEEK_API_KEY', None)
+  
+    if api_key:
+        system_prompt = '你是一个商品词提取专家，擅长从热词中提炼商品名词。'
+        user_prompt = (
+                "【任务】\n"
+                    "1. 输入包含多条商品标题，每条可能包含品牌、尺寸、材质、用途等描述。\n"
+                    "2. 请在所有标题中，识别并聚类出相同或相似的商品词（即产品类别/产品核心名词），同义词/近义词视为同一类。\n"
+                    "3. 统计这些商品词在所有标题中出现的频率，只要出现频率较高（即在多条标题中重复出现），就应当保留。\n"
+                    "4. 商品词必须是产品类别或核心物品名称，不要输出品牌、型号、形容词、用途或场景词。\n"
+                    "5. 输出时至少包含一个商品名词，不能返回空结果。\n"
+                    "6. 输出格式：多个商品名词用英文逗号隔开。\n"
+                    "\n"
+                    "【示例】\n"
+                    "输入：\n"
+                    "Cast Iron Plate Weight Plate for Strength Training and Weightlifting, 2-Inch Center (Olympic), 2.5LB (Set of 4)\n"
+                    "Cast Iron Olympic 2-Inch Grip Plate for Barbell, 5 Pound Set of 2 Plates Iron Grip Plates for Weightlifting\n"
+                    "Fitness Change Weight Plates 1.25LB 2.5LB 5LB Pairs Support Plates Olympic Plates for Weight Lifting\n"
+                    "Change Plates Set 1.25LB, 2.5LB, 5LB - Rubber-Coated Weight Plates in Pairs, Olympic Bumper Plates\n"
+                    "输出：Weight Plate,Grip Plate,Change Plate\n"
+                    "\n"
+                    "输入：\n"
+                    "Waist Trimmer Wrap, Waist Trainer for Women and Men, Sweat Band Waist Trainer\n"
+                    "Waist Trainer for Women Men Sweat Belt Waist Trimmer Belly Band Stomach Wraps\n"
+                    "输出：Waist Trainer,Waist Trimmer\n"
+                    "\n"
+                    "【要求】\n"
+                    "- 仅输出最终提取出的商品名词，用英文逗号隔开，不要解释。控制数量少于20个。\n"
+                f'- 现在请处理我的输入：{", ".join([str(w) for w in hotwords])}'
+        )
+        payload = {
+            'model': 'deepseek-chat',
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt},
+            ],
+            'temperature': 0,
+            'max_tokens': 512,
+        }
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+        }
+        try:
+            resp = requests.post('https://api.deepseek.com/beta/chat/completions',
+                                    headers=headers, json=payload, timeout=10)
+            if resp.ok:
+                rj = resp.json()
+                text = (rj.get('choices') or [{}])[0].get('message', {}).get('content', '') or ''
+                result = text.strip()
+                result = result.replace('、', ',').replace('|', ',').strip().strip('"\'`')
+                # 规范化逗号分隔
+                parts = [p.strip() for p in result.split(',') if p.strip()]
+                result = ','.join(parts)
+               
+                if result:
+                    return JsonResponse({'code': 0, 'msg': 'ok', 'data': result})
+        except requests.exceptions.RequestException:
+            # DeepSeek 请求异常（超时、连接错误等）时，进入回退逻辑
+            pass
+
+    # 回退：基于词频与长度的启发式
+    import re
+    from collections import Counter
+    tokens = []
+    for w in hotwords:
+        if not isinstance(w, str):
+            continue
+        s = w.strip()
+        if not s:
+            continue
+        cleaned = re.sub(r'[^0-9A-Za-z\u4e00-\u9fa5]+', '', s)
+        if not cleaned:
+            continue
+        tokens.append(cleaned.lower())
+    if not tokens:
+        return JsonResponse({'code': 0, 'msg': 'ok', 'data': ''})
+    freq = Counter(tokens)
+    def score(t):
+        return freq[t] * 2 + len(t) * 0.3
+    top = sorted(freq.keys(), key=lambda t: (-score(t), t))[:10]
+    result = ','.join(top)
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': result})
+
 
 def build_pagination(qs, request):
     page = int(request.GET.get('page', '1'))
@@ -110,6 +212,84 @@ def list_response(qs, request, mapper):
         'size': size,
     })
 
+@csrf_exempt
+def suggestion(request):
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+    data = parse_json(request)
+    # 兼容 JSON 与表单提交
+    shop_code = None
+    suggest_text = ''
+    phone = ''
+    if isinstance(data, dict):
+        shop_code = data.get('ShopCode') or data.get('shop_code')
+        suggest_text = data.get('suggest') or ''
+        phone = data.get('phone') or ''
+    if not shop_code:
+        shop_code = request.POST.get('ShopCode') or request.POST.get('shop_code')
+    if not suggest_text:
+        suggest_text = request.POST.get('suggest') or ''
+    if not phone:
+        phone = request.POST.get('phone') or ''
+
+    if not shop_code:
+        return JsonResponse({'code': 400, 'msg': 'ShopCode 必填'})
+
+    try:
+        # 通过数据库路由写入 suggests 库
+        Suggestion.objects.create(
+            shop_code=str(shop_code),
+            suggest=str(suggest_text or ''),
+            phone=str(phone or ''),
+        )
+    except Exception as e:
+        return JsonResponse({'code': 500, 'msg': f'写入失败: {str(e)}'})
+
+    return JsonResponse({'code': 200})
+
+
+@csrf_exempt
+def is_valid_customer(request):
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+    try:
+        payload = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'code': 400, 'msg': '请求体必须是有效JSON'})
+    shopcode = (payload.get('shopcode') or '').strip()
+    function = (payload.get('function') or '').strip()
+    if not shopcode:
+        return JsonResponse({'code': 400, 'msg': 'shopcode 必填'})
+
+    exists_in_store = StoreKey.objects.filter(store_code=shopcode).exists()
+    ok = False
+    message = ''
+    if exists_in_store:
+        ok = True
+        message = 'StoreKey 已存在，允许使用'
+    else:
+        obj, _ = Trial.objects.get_or_create(shopcode=shopcode, defaults={'times': 0})
+        if obj.times >= 5:
+            ok = False
+            message = '试用次数达到上限'
+        else:
+            obj.times += 1
+            obj.save()
+            ok = True
+            message = '试用次数+1，允许使用'
+
+    try:
+        UsageLog.objects.create(
+            user=request.user if getattr(request, 'user', None) and request.user.is_authenticated else None,
+            content=f"is_valid_customer: {function}",
+            store_code=shopcode,
+            points_consumed=0,
+            status='success' if ok else 'failure'
+        )
+    except Exception:
+        pass
+
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'valid': ok, 'shopcode': shopcode, 'function': function, 'reason': message}})
 
 # 映射函数（保留）
 word_mapper = lambda o: {
@@ -233,6 +413,7 @@ def adjust_points(request):
     # 写入调用日志（调整积分不消耗积分，记录状态）
     try:
         UsageLog.objects.create(
+            user=request.user,
             points_consumed=0,
             content=f"adjust_points delta={delta}",
             store_code=store_code,
@@ -967,5 +1148,453 @@ def recharge(request):
         return HttpResponse(payload_json, content_type='application/json')
     except Exception as e:
         return JsonResponse({'code': 500, 'msg': f'下单失败: {e}'})
+
+
+
+
+def find_user_by_username_or_phone(value):
+    value = (value or '').strip()
+    if not value:
+        return None
+    try:
+        # 先按用户名
+        user = User.objects.get(username=value)
+        return user
+    except User.DoesNotExist:
+        pass
+    try:
+        # 再按手机号关联的 Profile
+        from .models import Profile
+        p = Profile.objects.get(phone=value)
+        return p.user
+    except Profile.DoesNotExist:
+        return None
+
+@csrf_exempt
+def super_settings(request):
+    # 简单的会话标记验证，通过后才能操作
+    verified = request.session.get('super_verified') == True
+    error = None
+    msg = None
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'verify':
+            pwd = request.POST.get('password', '')
+            if pwd == 'tklingxi666':
+                request.session['super_verified'] = True
+                verified = True
+                msg = '验证成功'
+            else:
+                error = '超级密码错误'
+        elif action == 'set_storekey':
+            if not verified:
+                error = '请先完成超级密码验证'
+            else:
+                username = request.POST.get('username')
+                store_code = (request.POST.get('store_code') or '').strip()
+                secret = (request.POST.get('secret') or '').strip()
+                user = find_user_by_username_or_phone(username)
+                if not user:
+                    error = '未找到该用户（用户名或手机号）'
+                elif not store_code:
+                    error = '店铺代码不能为空'
+                elif not secret:
+                    error = '密钥不能为空'
+                else:
+                    sk, created = StoreKey.objects.update_or_create(
+                        user=user, store_code=store_code,
+                        defaults={'secret': secret}
+                    )
+                    msg = '已保存' if created else '已更新'
+    # 展示已有 store keys，若未验证则为空
+    store_keys = StoreKey.objects.all().order_by('-created_at') if verified else []
+    return render(request, 'super_settings.html', {
+        'verified': verified,
+        'error': error,
+        'msg': msg,
+        'store_keys': store_keys,
+    })
+
+
+def rm_brand(request):
+    """
+    POST /api/words/rm_brand
+    body: {"text": "..."}
+
+    逻辑：将文本中出现的【品牌词库】(Category.name == 'brand') 的词条及其别名替换为''直接删除。
+    大小写不敏感，按子串直接移除（中英文统一处理）。
+    返回清洗后的文本和被移除的词列表。
+    """
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+
+    data = parse_json(request)
+    text = (data.get('text') or '')
+    if not text.strip():
+        return JsonResponse({'code': 400, 'msg': 'text不能为空'})
+
+    # 收集品牌词与别名
+    phrases = []
+    brand_words = Word.objects.select_related('category').filter(is_active=True, category__name__iexact='brand')
+    phrases.extend([w.word for w in brand_words if (w.word or '').strip()])
+    brand_aliases = WordAlias.objects.select_related('word__category').filter(word__category__name__iexact='brand')
+    phrases.extend([a.alias for a in brand_aliases if (a.alias or '').strip()])
+
+    # 去重并按长度降序，避免较短词先删造成重叠影响
+    uniq_phrases = sorted(set(p.strip() for p in phrases if p), key=lambda s: (-len(s), s.lower()))
+
+    import re
+    cleaned = text
+    removed = []
+    for p in uniq_phrases:
+        if not p:
+            continue
+        pattern = re.compile(re.escape(p), flags=re.IGNORECASE)
+        if pattern.search(cleaned):
+            cleaned = pattern.sub('', cleaned)
+            removed.append(p)
+
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
+        'cleaned_text': cleaned,
+        'removed': sorted(set(removed), key=lambda s: (-len(s), s.lower()))
+    }})
+
+@csrf_exempt
+def rm_forbiden(request):
+    """
+    POST /api/words/rm_forbiden
+    body: {"text": "..."}
+    
+    逻辑：将文本中出现的【违禁词库】(Category.name == 'forbidden') 的词条及其别名替换为''直接删除。
+    大小写不敏感，按子串直接移除（中英文统一处理）。
+    返回清洗后的文本和被移除的词列表。
+    """
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+
+    data = parse_json(request)
+    text = (data.get('text') or '')
+    if not text.strip():
+        return JsonResponse({'code': 400, 'msg': 'text不能为空'})
+
+    # 收集违禁词与别名
+    phrases = []
+    forbidden_words = Word.objects.select_related('category').filter(is_active=True, category__name__iexact='forbidden')
+    phrases.extend([w.word for w in forbidden_words if (w.word or '').strip()])
+    forbidden_aliases = WordAlias.objects.select_related('word__category').filter(word__category__name__iexact='forbidden')
+    phrases.extend([a.alias for a in forbidden_aliases if (a.alias or '').strip()])
+
+    # 去重并按长度降序，避免较短词先删造成重叠影响
+    uniq_phrases = sorted(set(p.strip() for p in phrases if p), key=lambda s: (-len(s), s.lower()))
+
+    import re
+    cleaned = text
+    removed = []
+    for p in uniq_phrases:
+        # 忽略空
+        if not p:
+            continue
+        # 构建不区分大小写的安全替换（转义正则特殊符号）
+        pattern = re.compile(re.escape(p), flags=re.IGNORECASE)
+        if pattern.search(cleaned):
+            cleaned = pattern.sub('', cleaned)
+            removed.append(p)
+
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
+        'cleaned_text': cleaned,
+        'removed': sorted(set(removed), key=lambda s: (-len(s), s.lower()))
+    }})
+
+
+@csrf_exempt
+def clean_text_multi(request):
+    """
+    POST /api/words/clean_multi
+    body: {
+      "text": "...",
+      "categories": ["forbidden","brand","keyword"],
+      "hotwords": ""  # 新增，可选，默认为空字符串
+    }
+    """
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+
+    data = parse_json(request)
+    text = (data.get('text') or '')
+    if not text.strip():
+        return JsonResponse({'code': 400, 'msg': 'text不能为空'})
+
+    # 新增：热词参数，默认空字符串
+    hotwords = str(data.get('hotwords', '') or '').strip()
+
+    # 新增：当 categories 为空列表时，直接返回原文本与空结果
+    categories_param = data.get('categories')
+    if isinstance(categories_param, list) and len(categories_param) == 0:
+        cleaned = text
+        removed_tokens = []
+        removed_by_category = []
+        appended_keywords = []
+        return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
+            'cleaned_text': cleaned,
+            'removed_tokens': removed_tokens,
+            'removed_by_category': removed_by_category,
+            'appended_keywords': appended_keywords,
+        }})
+
+    # 解析参数
+    req_categories = categories_param or ['forbidden', 'brand', 'keyword']
+    req_categories = [str(c).strip().lower() for c in req_categories if str(c).strip()]
+    # 若 hotwords 非空，则移除 keyword 类别，不执行 keyword 相关逻辑
+    if hotwords:
+        req_categories = [c for c in req_categories if c != 'keyword']
+
+    import re
+    from django.db.models import Q
+    # 分词：按非字母数字与撇号拆分，保留较有意义的 token（长度>=2）
+    tokens = [t.lower() for t in re.split(r"[^A-Za-z0-9']+", text) if len(t) >= 2]
+    uniq_tokens = sorted(set(tokens))
+
+    # DeepSeek API（OpenAI兼容）判断同义助手
+    DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
+    def _is_synonym(a: str, b: str) -> bool:
+        # 若未配置密钥，降级为严格相似度判断
+        a1 = (a or '').strip().lower()
+        b1 = (b or '').strip().lower()
+        if not a1 or not b1:
+            return False
+        # 先用本地相似度快速过滤，避免无意义调用
+        ratio = difflib.SequenceMatcher(None, a1, b1).ratio()
+        if ratio >= 0.92:
+            return True
+        if not DEEPSEEK_API_KEY:
+            return False
+        try:
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "You are a strict synonym/equivalence checker. Reply only 'yes' or 'no'."},
+                    {"role": "user", "content": f"Are '{a1}' and '{b1}' synonyms or representing the same brand/company/product? Answer yes or no."}
+                ],
+                "stream": False
+            }
+            headers = {
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=6)
+            if resp.status_code == 200:
+                jr = resp.json()
+                content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip().lower()
+                return content.startswith('y') or ('yes' in content)
+        except Exception:
+            # 网络或API错误时，不判定为同义
+            return False
+        return False
+
+    # 模糊搜索候选（按 token 局部匹配），返回 [(phrase, category, score)]
+    def _fuzzy_candidates(token: str):
+        cands = []
+        # 词条
+        w_qs = Word.objects.select_related('category').filter(
+            is_active=True,
+            category__name__in=req_categories,
+            word__icontains=token
+        )[:200]
+        for w in w_qs:
+            s = (w.word or '').strip()
+            if not s:
+                continue
+            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
+            cands.append((s, w.category.name.lower(), score))
+        # 别名
+        a_qs = WordAlias.objects.select_related('word__category').filter(
+            word__category__name__in=req_categories,
+            alias__icontains=token
+        )[:200]
+        for a in a_qs:
+            s = (a.alias or '').strip()
+            if not s:
+                continue
+            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
+            cands.append((s, a.word.category.name.lower(), score))
+        # 选取得分较高的前若干个
+        cands.sort(key=lambda x: (-x[2], -len(x[0]), x[0].lower()))
+        return cands[:5]
+
+    cleaned = text
+    removed_tokens = []
+    removed_by_category = {c: [] for c in req_categories}
+
+    # 对每个 token：模糊搜索候选→DeepSeek判断同义→同义则删除该 token（按词边界）
+    for tk in uniq_tokens:
+        candidates = _fuzzy_candidates(tk)
+        # 仅当存在较相关候选时才尝试判断
+        if not candidates:
+            continue
+        # 若任一候选与该token同义/等价，则删除该token
+        synonym_hit = None
+        for phrase, cat, score in candidates:
+            # 先做分数门槛（避免过低匹配触发API）
+            if score < 0.6:
+                continue
+            # 仅对 forbidden 执行删除（品牌改为通过 DeepSeek 整体识别后统一删除）
+            if cat in ('forbidden',) and _is_synonym(tk, phrase):
+                synonym_hit = (phrase, cat)
+                break
+        if synonym_hit:
+            pattern = re.compile(rf"\b{re.escape(tk)}\b", flags=re.IGNORECASE)
+            if pattern.search(cleaned):
+                cleaned = pattern.sub('', cleaned)
+                removed_tokens.append(tk)
+                cat = synonym_hit[1]
+                removed_by_category.setdefault(cat, [])
+                removed_by_category[cat].append(tk)
+
+    # 品牌词：调用 DeepSeek API 从整段文本中抽取品牌词，并统一从原文本中移除
+    def _extract_brands_with_deepseek(full_text: str):
+        api_key = os.getenv('DEEPSEEK_API_KEY', '')
+        if not api_key or not (full_text or '').strip():
+            return []
+        try:
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "你是一个严格的品牌词抽取器。必须100%确认是品牌词才能提取，宁可漏判不可误判。，返回JSON数组。"},
+                    {"role": "user", "content": (
+                           "请从下面文本中找出品牌词，规则：\n"
+                            "1) 排除规则（以下情况绝对不是品牌词）：\n"
+                            "   - 通用产品名称（如 knife, tool, drill, machine 等）\n"
+                            "   - 产品特性描述（如 rainbow, cute, small, legal 等）\n"
+                            "   - 产品用途描述（如 self defense, camping, EDC 等）\n"
+                            "   - 含数字的型号代码（如 6655 R）\n"
+                            "   - 目标人群（如 women, womens）\n"
+                            "   - 节日/场合（如 birthday, gifts）\n"
+                            "\n"
+                            "2) 品牌词特征（符合1个及以上即可判断为品牌词）：\n"
+                            "   - 专有名词，不是普通英文单词\n"
+                            "   - 在商业语境中常作为品牌或卖家名出现\n"
+                            "   - 无法自然直译成中文\n"
+                            "   - 不包含产品功能描述\n"
+                            "   - 一般首字母大写的单词或全部大写的单词\n"
+                            "   - 拼写看似不规范，或不是常见英文词汇\n"
+                            "\n"
+                            "3) 判断标准：\n"
+                            "   - 如果一个词既不是常见英文单词，又不是常见产品通用词，那么优先作为品牌词保留\n"
+                            "   - 即使不是国际知名品牌，也要提取出来（例如小众品牌、店铺品牌）\n"
+                            "   - 如果完全无法判断，可以标注为【可能是品牌词】并输出\n"
+                            "4) 输出格式：严格返回JSON：{\"brands\": [\"brand1\", \"brand2\"]}，如果没有品牌词就返回空数组"
+                            f"文本：{full_text}"
+                    )}
+                ],
+                "stream": False
+            }
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=8)
+            if resp.status_code != 200:
+                return []
+            jr = resp.json()
+            content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip()
+            import json as _json
+            brands = []
+            try:
+                obj = _json.loads(content)
+                if isinstance(obj, dict) and isinstance(obj.get('brands'), list):
+                    brands = [str(x).strip() for x in obj.get('brands') if str(x).strip()]
+                elif isinstance(obj, list):
+                    brands = [str(x).strip() for x in obj if str(x).strip()]
+            except Exception:
+                # 宽松解析：逗号/换行分隔
+                parts = [p.strip() for p in re.split(r"[,]", content) if p.strip()]
+                brands = parts
+            # 过滤掉全数字/主要为数字的项
+            def _is_mostly_digits(s: str):
+                digits = sum(ch.isdigit() for ch in s)
+                return digits >= max(3, len(s) * 0.6)
+            brands = [b for b in brands if len(b) >= 2 and not _is_mostly_digits(b)]
+            return brands
+        except Exception:
+            return []
+
+    if 'brand' in req_categories:
+        brands = _extract_brands_with_deepseek(text)
+        if brands:
+            # 按长度降序移除，避免子串影响
+            phrases = sorted(set(b for b in brands if b), key=lambda s: (-len(s.strip()), s.lower()))
+            for p in phrases:
+                if not p:
+                    continue
+                # 使用词边界匹配，避免删除非品牌词的子串（如 Pineapple 中的 apple）
+                pattern = re.compile(rf"\b{re.escape(p)}\b", flags=re.IGNORECASE)
+                if pattern.search(cleaned):
+                    cleaned = pattern.sub('', cleaned)
+                    removed_tokens.append(p)
+                    removed_by_category.setdefault('brand', [])
+                    removed_by_category['brand'].append(p)
+
+    # 关键词：基于分词在 keyword 类别中模糊搜索最相关词并追加到文本末尾
+    appended_keywords = []
+
+    def _best_keyword_for_token(token: str):
+        cands = []
+        # 仅在 keyword 分类中查找
+        w_qs = Word.objects.select_related('category').filter(
+            is_active=True, category__name__iexact='keyword', word__icontains=token
+        )[:300]
+        for w in w_qs:
+            s = (w.word or '').strip()
+            if s:
+                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
+        a_qs = WordAlias.objects.select_related('word__category').filter(
+            word__category__name__iexact='keyword', alias__icontains=token
+        )[:300]
+        for a in a_qs:
+            s = (a.alias or '').strip()
+            if s:
+                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
+        if not cands:
+            return None
+        cands.sort(key=lambda x: (-x[1], -len(x[0]), x[0].lower()))
+        best = cands[0]
+        return best if best[1] >= 0.6 else None
+
+    # 仅对未被删除的 token 做关键词追加，降低噪声
+    tokens_for_keywords = [t for t in uniq_tokens if t not in set(removed_tokens)]
+    if 'keyword' in req_categories:
+        for tk in tokens_for_keywords:
+            m = _best_keyword_for_token(tk)
+            if not m:
+                continue
+            best_phrase = m[0]
+            if best_phrase and best_phrase.lower() not in [x.lower() for x in appended_keywords]:
+                # 末尾以空格追加一次
+                cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + best_phrase)
+                appended_keywords.append(best_phrase)
+
+    # 新增：在程序末尾确保 hotwords 中每个词都包含在 cleaned 中
+    if hotwords:
+        for w in [x for x in hotwords.split(' ') if x.strip()]:
+            # 用词边界判断是否已存在，避免子串误判
+            if not re.search(rf"\b{re.escape(w)}\b", cleaned, flags=re.IGNORECASE):
+                cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + w)
+
+    # 去重与排序清理
+    removed_tokens = sorted(set(removed_tokens), key=lambda s: (-len(s), s.lower()))
+    for c in list(removed_by_category.keys()):
+        removed_by_category[c] = sorted(set(removed_by_category[c]), key=lambda s: (-len(s), s.lower()))
+
+    # 修复：移除重复的智能长度裁剪尾部片段，避免SyntaxError
+
+    # 智能长度裁剪，最多255字符
+    cleaned = cleaned.strip()
+    if len(cleaned) > 255:
+        cleaned = cleaned[:255].rstrip()
+
+    return JsonResponse({
+        "cleaned_text": cleaned,
+        "removed_tokens": removed_tokens,
+        "removed_by_category": removed_by_category,
+        "appended_keywords": appended_keywords,
+    })
 
 

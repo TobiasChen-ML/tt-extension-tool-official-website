@@ -1,4 +1,4 @@
-*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,PingFang SC,Microsoft YaHei,sans-serif;color:#111}a{color:#2b6cb0;text-decoration:none}a:hover{text-decoration:underline}.container{max-width:1100px;margin:0 auto;padding:0 16px}.nav{position:sticky;top:0;background:#fff;border-bottom:1px solid #eee}.nav .container{display:flex;align-items:center;justify-content:space-between;height:56px}.logo{font-weight:700}.hero{background:linear-gradient(135deg,#f0f5ff,#fff);padding:64px 0;text-align:center}.hero h1{font-size:36px;margin:0 0 8px}.hero p{color:#555;margin:0 0 16px}.btn{display:inline-block;padding:10px 16px;border:1px solid #ccc;border-radius:6px;margin-right:10px}.btn.primary{background:#111;color:#fff;border-color:#111}.features .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin:32px 0}.card{border:1px solid #eee;border-radius:10px;padding:16px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.03)}.footer{border-top:1px solid #eee;margin-top:40px}.footer .container{padding:16px 0;text-align:center}.auth-container{max-width:420px;margin:60px auto;padding:24px;border:1px solid #eee;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)}.auth-container .btn{width:100%;margin:8px 0;height:40px}.auth-container input{width:100%;height:40px;border:1px solid #ddd;border-radius:6px;padding:0 10px;margin:6px 0}.auth-container .error{background:#fde8e8;border:1px solid #f8b4b4;color:#9b1c1c;padding:8px 10px;border-radius:6px;margin-bottom:8px}.profile{display:flex;gap:12px;align-items:center;margin:16px 0}.profile .avatar{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f3f4f6;font-size:24px}.table{width:100%;border-collapse:collapse}.table th,.table td{border:1px solid #eee;padding:8px;text-align:left}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,PingFang SC,Microsoft YaHei,sans-serif;color:#111}a{color:#2b6cb0;text-decoration:none}a:hover{text-decoration:underline}.container{max-width:1100px;margin:0 auto;padding:0 16px}.nav{position:sticky;top:0;background:#fff;border-bottom:1px solid #eee}.nav .container{display:flex;align-items:center;justify-content:space-between;height:56px}.logo{font-weight:800;font-size:20px;letter-spacing:.5px}.hero{background:linear-gradient(135deg,#f0f5ff,#fff);padding:64px 0;text-align:center}.hero h1{font-size:42px}.nav{border-bottom:2px solid #111}.btn.primary{background:#111;color:#fff;border-color:#111;box-shadow:0 4px 10px rgba(0,0,0,.08)}.nav .logo img{height:30px}.hero h1{font-size:36px;margin:0 0 8px}.hero p{color:#555;margin:0 0 16px}.btn{display:inline-block;padding:10px 16px;border:1px solid #ccc;border-radius:6px;margin-right:10px}.btn.primary{background:#111;color:#fff;border-color:#111}.features .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin:32px 0}.card{border:1px solid #eee;border-radius:10px;padding:16px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.03)}.footer{border-top:1px solid #eee;margin-top:40px}.footer .container{padding:16px 0;text-align:center}.auth-container{max-width:420px;margin:60px auto;padding:24px;border:1px solid #eee;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)}.auth-container .btn{width:100%;margin:8px 0;height:40px}.auth-container input{width:100%;height:40px;border:1px solid #ddd;border-radius:6px;padding:0 10px;margin:6px 0}.auth-container .error{background:#fde8e8;border:1px solid #f8b4b4;color:#9b1c1c;padding:8px 10px;border-radius:6px;margin-bottom:8px}.profile{display:flex;gap:12px;align-items:center;margin:16px 0}.profile .avatar{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f3f4f6;font-size:24px}.table{width:100%;border-collapse:collapse}.table th,.table td{border:1px solid #eee;padding:8px;text-align:left}
 /* ---- TK极光风格扩展样式 ---- */
 :root{
   --primary:#7c3aed;      /* 紫色主色 */
@@ -49,6 +49,9 @@ html,body{background:#fff}
 .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
 @media (max-width:900px){.grid-3,.grid-4{grid-template-columns:1fr 1fr}}
 @media (max-width:640px){.grid-3,.grid-4{grid-template-columns:1fr}}
+.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+@media (max-width:900px){.grid-2{grid-template-columns:1fr}}
+@media (max-width:640px){.grid-2{grid-template-columns:1fr}}
 .kpi{background:var(--surface);border:1px solid #eef;border-radius:14px;padding:24px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.03)}
 .kpi .num{font-size:34px;font-weight:800;color:#111}
 .kpi .label{color:var(--text-2);margin-top:4px}
@@ -112,3 +115,32 @@ html,body{background:#fff}
 .pill{padding:8px 12px;border-radius:999px;border:1px solid #e5e7eb;background:#fff;color:#111}
 .pill.active{border-color:var(--primary);box-shadow:0 0 0 4px var(--ring);color:var(--primary)}
 .footer-actions{margin-top:16px;display:flex;justify-content:flex-end}
+.nav{z-index:1000}
+
+/* 第一行账户信息KPI定制样式 */
+.kpi-account{text-align:left;display:flex;flex-direction:column;gap:8px}
+.kpi-account .account-title{font-weight:700;color:#111}
+.kpi-account .account-profile{margin:0}
+.kpi-account .avatar{background:#f3f4f6}
+
+/* 店铺密钥整行时，输入框更宽以适配 */
+.secret-input{max-width:420px}
+
+/* 联系作者弹窗 */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 1000; }
+.modal-overlay.open { display: flex; }
+.modal { background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,.2); width: min(520px, 92vw); padding:22px; }
+.modal h3 { font-size:22px; }
+.modal-qr { width:100%; max-width:380px; border-radius:8px; display:block; margin:12px auto; }
+.modal-tip { color:#666; text-align:center; }
+.modal-close { position:absolute; top:10px; right:14px; background:transparent; border:none; font-size:24px; line-height:1; cursor:pointer; color:#999; }
+.modal-close:hover { color:#333; }
+
+/* 首页常驻二维码 */
+.qr-widget { position:absolute; right:0; bottom:-10px; background:rgba(255,255,255,.92); backdrop-filter:saturate(1.8) blur(4px); border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.12); padding:10px; display:flex; align-items:center; gap:10px; }
+.qr-widget img { width:88px; height:auto; border-radius:6px; }
+.qr-widget .qr-caption { font-size:13px; color:#333; }
+
+@media (max-width: 768px) {
+  .qr-widget { position:static; margin-top:12px; justify-content:center; }
+}

@@ -1,0 +1,124 @@
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,PingFang SC,Microsoft YaHei,sans-serif;color:#111}a{color:#2b6cb0;text-decoration:none}a:hover{text-decoration:underline}.container{max-width:1100px;margin:0 auto;padding:0 16px}.nav{position:sticky;top:0;background:#fff;border-bottom:1px solid #eee}.nav .container{display:flex;align-items:center;justify-content:space-between;height:56px}.logo{font-weight:800;font-size:20px;letter-spacing:.5px}.hero{background:linear-gradient(135deg,#f0f5ff,#fff);padding:64px 0;text-align:center}.hero h1{font-size:42px}.nav{border-bottom:2px solid #111}.btn.primary{background:#111;color:#fff;border-color:#111;box-shadow:0 4px 10px rgba(0,0,0,.08)}.nav .logo img{height:30px}.hero h1{font-size:36px;margin:0 0 8px}.hero p{color:#555;margin:0 0 16px}.btn{display:inline-block;padding:10px 16px;border:1px solid #ccc;border-radius:6px;margin-right:10px}.btn.primary{background:#111;color:#fff;border-color:#111}.features .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin:32px 0}.card{border:1px solid #eee;border-radius:10px;padding:16px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.03)}.footer{border-top:1px solid #eee;margin-top:40px}.footer .container{padding:16px 0;text-align:center}.auth-container{max-width:420px;margin:60px auto;padding:24px;border:1px solid #eee;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)}.auth-container .btn{width:100%;margin:8px 0;height:40px}.auth-container input{width:100%;height:40px;border:1px solid #ddd;border-radius:6px;padding:0 10px;margin:6px 0}.auth-container .error{background:#fde8e8;border:1px solid #f8b4b4;color:#9b1c1c;padding:8px 10px;border-radius:6px;margin-bottom:8px}.profile{display:flex;gap:12px;align-items:center;margin:16px 0}.profile .avatar{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f3f4f6;font-size:24px}.table{width:100%;border-collapse:collapse}.table th,.table td{border:1px solid #eee;padding:8px;text-align:left}
+/* ---- TK极光风格扩展样式 ---- */
+:root{
+  --primary:#7c3aed;      /* 紫色主色 */
+  --primary-600:#6d28d9;
+  --primary-700:#5b21b6;
+  --text-1:#0f172a;
+  --text-2:#475569;
+  --muted:#94a3b8;
+  --surface:#ffffff;
+  --surface-2:#f8fafc;
+  --ring:rgba(124,58,237,.15);
+}
+
+html,body{background:#fff}
+.section{padding:64px 0}
+.section .section-title{font-size:34px;line-height:1.2;margin:0 0 14px;text-align:center}
+.section .section-sub{color:var(--text-2);text-align:center;margin:0 auto 28px;max-width:780px}
+.gradient-text{background:linear-gradient(90deg,var(--primary),#4f46e5);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* 顶部导航增强 */
+.nav .container nav a{margin:0 10px;color:#1f2937}
+.nav .actions{display:flex;gap:10px}
+.btn.solid{background:linear-gradient(135deg,var(--primary),#4f46e5);color:#fff;border-color:transparent}
+.btn.small{padding:8px 12px}
+
+/* 英雄区域 */
+.hero{padding:88px 0;background:linear-gradient(180deg,#fafaff,rgba(245,243,255,.7) 30%,#fff 100%)}
+.nav .logo img{height:26px;display:block}
+.hero .title{font-size:44px;line-height:1.15;margin:0 0 10px}
+.hero .sub{color:var(--text-2);margin:0 0 24px}
+.hero .visual{margin:28px auto 0;max-width:820px;min-height:280px;border-radius:18px;background:radial-gradient(1200px 400px at 10% -10%,rgba(124,58,237,.25),transparent 60%),radial-gradient(800px 300px at 90% 20%,rgba(79,70,229,.18),transparent 60%),linear-gradient(135deg,#8b5cf6,#4f46e5);position:relative;box-shadow:0 20px 60px rgba(79,70,229,.25)}
+.hero .visual:after{content:"▶";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,.2);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;color:#fff;font-size:30px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.hero .float-pill{position:absolute;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid #eef;box-shadow:0 4px 14px rgba(124,58,237,.12);font-size:12px;color:#4f46e5}
+.hero .pill-a{left:20px;top:20px}
+.hero .pill-b{right:22px;top:40px}
+.hero .pill-c{right:28px;bottom:26px}
+
+/* 功能卡片网格 */
+.features .grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px}
+.card.icon{display:flex;gap:12px}
+.card .ic{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,rgba(124,58,237,.16),rgba(79,70,229,.16));color:#4f46e5}
+.card h3{margin:0 0 8px}
+.card p{margin:0;color:var(--text-2)}
+
+/* 次级功能与KPI */
+.grid{display:grid}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+@media (max-width:900px){.grid-3,.grid-4{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.grid-3,.grid-4{grid-template-columns:1fr}}
+.kpi{background:var(--surface);border:1px solid #eef;border-radius:14px;padding:24px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.03)}
+.kpi .num{font-size:34px;font-weight:800;color:#111}
+.kpi .label{color:var(--text-2);margin-top:4px}
+
+/* 评价卡片 */
+.testimonials{background:linear-gradient(180deg,#fff,#faf7ff)}
+.testimonial{background:#fff;border:1px solid #eef;border-radius:16px;padding:18px;box-shadow:0 6px 22px rgba(79,70,229,.08)}
+.testimonial .stars{color:#f59e0b;margin-bottom:8px}
+.testimonial .meta{display:flex;gap:12px;align-items:center;margin-top:10px;color:var(--muted)}
+
+/* CTA 条 */
+.cta{background:linear-gradient(135deg,#8b5cf6,#4f46e5);color:#fff;border-radius:16px;padding:28px 20px;text-align:center;box-shadow:0 10px 30px rgba(99,102,241,.25)}
+.cta .btn{margin-top:8px;border-color:#fff}
+
+.footer{background:#fff}
+/* 合作浏览器解决方案 */
+.partner{background:linear-gradient(180deg,#fafaff,#fff)}
+.partner-card{display:grid;grid-template-columns:1.2fr 1fr;gap:20px;padding:24px;border-radius:18px;border:1px solid #eef;background:#fff;box-shadow:0 10px 30px rgba(124,58,237,.08)}
+@media (max-width:860px){.partner-card{grid-template-columns:1fr}}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#6d28d9;background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);padding:4px 8px;border-radius:999px}
+.list{margin:12px 0 0 0;padding:0;list-style:none}
+.list li{display:flex;gap:8px;align-items:flex-start;margin:8px 0;color:#374151}
+.list li .dot{color:#f59e0b}
+.tag-row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.tag{font-size:12px;color:#4f46e5;background:rgba(79,70,229,.08);border:1px solid rgba(79,70,229,.18);padding:4px 8px;border-radius:999px}
+.note{color:#64748b;font-size:12px}
+.input{height:40px;border:1px solid #e5e7eb;border-radius:10px;padding:0 12px;width:100%;background:#fff}
+.input-group{display:flex;gap:8px;align-items:center}
+.copy-btn{height:40px;padding:0 12px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc}
+
+/* CTA 英雄下载区 */
+.cta-hero{background:linear-gradient(135deg,#8b5cf6,#4f46e5);color:#fff}
+.cta-hero .section-title{color:#fff}
+.cta-panel{display:grid;grid-template-columns:1.4fr 1fr;gap:22px;padding:22px;border-radius:18px;background:rgba(255,255,255,.12);backdrop-filter:blur(2px);box-shadow:0 10px 30px rgba(0,0,0,.15)}
+@media (max-width:860px){.cta-panel{grid-template-columns:1fr}}
+.bullets{list-style:none;padding:0;margin:0}
+.bullets li{display:flex;gap:10px;align-items:flex-start;margin:10px 0}
+.bullets .ok{color:#22c55e}
+.btn-lg{padding:14px 20px;border-radius:12px}
+.btn.white{background:#fff;color:#4f46e5;border-color:transparent}
+.btn.outline-white{color:#fff;border-color:rgba(255,255,255,.6);background:transparent}
+.small-card{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:14px;padding:14px}
+.small-card h4{margin:0 0 6px}
+.hero .visual{overflow:hidden}
+.hero .visual .hero-illustration{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:76%;max-width:920px;opacity:.18;z-index:1;filter:drop-shadow(0 10px 30px rgba(79,70,229,.25))}
+.hero .float-pill{z-index:2}
+.hero .visual:after{z-index:2}
+/* 在末尾追加dashboard样式 */
+/* Dashboard 头部与网格布局 */
+.dash-header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px}
+.dash-title{margin:0;font-size:26px;line-height:1.2}
+.dash-sub{color:var(--text-2);margin:6px 0 0}
+.metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:16px 0 18px}
+@media (max-width:900px){.metric-row{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.metric-row{grid-template-columns:1fr}}
+.dash-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:18px}
+@media (max-width:900px){.dash-grid{grid-template-columns:1fr}}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.card-sub{color:var(--muted);font-size:12px}
+.amount-pills{display:flex;gap:8px;flex-wrap:wrap}
+.pill{padding:8px 12px;border-radius:999px;border:1px solid #e5e7eb;background:#fff;color:#111}
+.pill.active{border-color:var(--primary);box-shadow:0 0 0 4px var(--ring);color:var(--primary)}
+.footer-actions{margin-top:16px;display:flex;justify-content:flex-end}
+.nav{z-index:1000}
+
+/* 第一行账户信息KPI定制样式 */
+.kpi-account{text-align:left;display:flex;flex-direction:column;gap:8px}
+.kpi-account .account-title{font-weight:700;color:#111}
+.kpi-account .account-profile{margin:0}
+.kpi-account .avatar{background:#f3f4f6}
+
+/* 店铺密钥整行时，输入框更宽以适配 */
+.secret-input{max-width:420px}

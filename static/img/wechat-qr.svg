@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="680" viewBox="0 0 512 680">
+  <defs>
+    <style>
+      .title { font: 700 20px sans-serif; }
+      .sub { font: 500 14px sans-serif; fill: #666; }
+      .hint { font: 400 12px sans-serif; fill: #999; }
+      .box { fill:#fff; stroke:#eee; stroke-width:1; }
+      .qr { fill:#111; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="512" height="680" fill="#f8f8f8"/>
+  <g transform="translate(24,24)">
+    <rect class="box" x="0" y="0" width="464" height="632" rx="20"/>
+    <text class="title" x="24" y="40">TK灵犀 Listing Copilot</text>
+    <text class="sub" x="24" y="68">联系作者 · 微信号 VectorizerCN</text>
+    <g transform="translate(52,96)">
+      <!-- Simplified placeholder QR pattern -->
+      <rect x="0" y="0" width="360" height="360" fill="#fff" stroke="#ddd"/>
+      <rect class="qr" x="24" y="24" width="72" height="72"/>
+      <rect class="qr" x="264" y="24" width="72" height="72"/>
+      <rect class="qr" x="24" y="264" width="72" height="72"/>
+      <rect class="qr" x="264" y="264" width="72" height="72"/>
+      <rect class="qr" x="130" y="130" width="100" height="100" rx="8"/>
+      <!-- scatter dots -->
+      <circle class="qr" cx="160" cy="40" r="6"/>
+      <circle class="qr" cx="200" cy="60" r="5"/>
+      <circle class="qr" cx="240" cy="80" r="4"/>
+      <circle class="qr" cx="80" cy="160" r="4"/>
+      <circle class="qr" cx="320" cy="200" r="5"/>
+      <circle class="qr" cx="220" cy="300" r="6"/>
+      <circle class="qr" cx="60" cy="240" r="5"/>
+      <circle class="qr" cx="340" cy="120" r="4"/>
+    </g>
+    <text class="hint" x="24" y="612">此为占位二维码图片，如需替换请提供最终二维码素材。</text>
+  </g>
+</svg>

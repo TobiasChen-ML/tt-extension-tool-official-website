@@ -14,7 +14,7 @@ from alibabacloud_tea_util.client import Client as UtilClient
 SMS_ACCESS_ID = os.getenv('ALIYUN_SMS_ACCESS_ID', '')
 SMS_ACCESS_SECRET = os.getenv('ALIYUN_SMS_ACCESS_SECRET', '')
 # 从环境变量读取短信签名和模板
-SMS_SIGN_NAME = os.getenv('ALIYUN_SMS_SIGN_NAME', 'Vectorizer')
+SMS_SIGN_NAME = os.getenv('ALIYUN_SMS_SIGN_NAME', 'TK 灵犀')
 SMS_TEMPLATE_CODE = os.getenv('ALIYUN_SMS_TEMPLATE_CODE', 'SMS_307081209')
 
 class SMS:

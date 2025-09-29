@@ -33,9 +33,9 @@ class Product(models.Model):
 
 class Order(models.Model):
     STATUS_CHOICES = (
-        ('pending','Pending'),
-        ('paid','Paid'),
-        ('failed','Failed'),
+        ('pending','待支付'),
+        ('paid','成功'),
+        ('failed','失败'),
     )
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True)
@@ -171,11 +171,12 @@ def remove_word_from_fts(sender, instance: Word, **kwargs):
 
 # ---------------- 调用使用日志 ----------------
 class UsageLog(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='usage_logs', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)  # 时间
     points_consumed = models.IntegerField(default=0)  # 消耗多少积分
     content = models.TextField(blank=True, default='')  # 接口（内容）
     store_code = models.CharField(max_length=100, blank=True, default='')  # 店铺代码
-    status = models.CharField(max_length=10, choices=(('success','success'),('failure','failure')), default='success')  # 状态
+    status = models.CharField(max_length=10, choices=(('success','成功'),('failure','失败')), default='success')  # 状态
 
     class Meta:
         indexes = [
@@ -205,3 +206,30 @@ class PointsBalance(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.store_code}: {self.points}"
+
+class Suggestion(models.Model):
+    shop_code = models.CharField(max_length=100)
+    suggest = models.TextField(blank=True, default='')
+    phone = models.CharField(max_length=50, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'suggestion'
+        managed = True
+
+    def __str__(self):
+        return f"{self.shop_code} - {self.phone}"
+
+class Trial(models.Model):
+    shopcode = models.CharField(max_length=100, unique=True)
+    times = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = 'trials'
+        indexes = [models.Index(fields=['shopcode'])]
+        verbose_name = 'Trial'
+        verbose_name_plural = 'Trials'
+
+    def __str__(self):
+        return f"{self.shopcode} - {self.times}"

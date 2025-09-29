@@ -7,10 +7,11 @@ DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
 DOMAIN_NAME=http://localhost:8000
 
 # Aliyun SMS
-ALIYUN_SMS_ACCESS_ID=
-ALIYUN_SMS_ACCESS_SECRET=
-ALIYUN_SMS_SIGN_NAME=Vectorizer
-ALIYUN_SMS_TEMPLATE_CODE=SMS_307081209
+# Aliyun SMS Settings (replace with your actual values)
+ALIYUN_ACCESS_KEY_ID=your_access_key_id
+ALIYUN_ACCESS_KEY_SECRET=your_access_key_secret
+ALIYUN_SMS_SIGN_NAME=TK 灵犀
+ALIYUN_SMS_TEMPLATE_CODE=your_template_code
 
 # WeChat Pay V2
 WECHAT_PAY_APP_ID=

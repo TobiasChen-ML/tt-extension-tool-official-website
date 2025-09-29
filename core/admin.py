@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, UsageLog, PointsBalance
+from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, UsageLog, PointsBalance, Suggestion, Trial, StoreKey
 
 
 @admin.register(Profile)
@@ -66,3 +66,20 @@ class UsageLogAdmin(admin.ModelAdmin):
 class PointsBalanceAdmin(admin.ModelAdmin):
     list_display = ('user', 'store_code', 'points')
     search_fields = ('user__username', 'store_code')
+
+
+@admin.register(Suggestion)
+class SuggestionAdmin(admin.ModelAdmin):
+    list_display = ('shop_code', 'phone', 'processed', 'created_at')
+    search_fields = ('shop_code', 'phone', 'suggest')
+    list_filter = ('processed',)
+
+
+admin.site.register(Trial)
+
+
+@admin.register(StoreKey)
+class StoreKeyAdmin(admin.ModelAdmin):
+    list_display = ('user', 'store_code', 'secret', 'created_at')
+    search_fields = ('user__username', 'store_code')
+    list_filter = ()

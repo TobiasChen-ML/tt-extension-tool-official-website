@@ -51,9 +51,17 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    },
+    'suggests': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'suggestions.sqlite3',
+    },
 }
 
+# 多数据库路由：将 Suggestion 模型的迁移与读写路由到 suggests 数据库
+DATABASE_ROUTERS = [
+    'core.db_routers.SuggestionRouter',
+]
 AUTH_PASSWORD_VALIDATORS = []
 
 LANGUAGE_CODE = 'zh-hans'
@@ -69,7 +77,7 @@ LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/dashboard/'
 
 # Aliyun SMS settings (from env)
-ALIYUN_SMS_SIGN_NAME = os.getenv('ALIYUN_SMS_SIGN_NAME', 'Vectorizer')
+ALIYUN_SMS_SIGN_NAME = os.getenv('ALIYUN_SMS_SIGN_NAME', 'TK 灵犀')
 ALIYUN_SMS_TEMPLATE_CODE = os.getenv('ALIYUN_SMS_TEMPLATE_CODE', 'SMS_307081209')
 
 # WeChat Pay settings (from env)

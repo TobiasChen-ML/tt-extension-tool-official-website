@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>超级设置</title>
+  <link rel="stylesheet" href="/static/site.css" />
+  <style>
+    .container { max-width: 860px; margin: 40px auto; padding: 0 16px; }
+    .card { background:#fff; border:1px solid #eee; border-radius:12px; box-shadow:0 6px 24px rgba(0,0,0,0.06); padding:18px; margin-bottom:18px; }
+    .row { display:flex; gap:12px; }
+    .row > * { flex:1; }
+    input[type=text], input[type=password] { width:100%; padding:10px 12px; border:1px solid #ddd; border-radius:8px; }
+    button { padding:10px 16px; border:none; border-radius:8px; background:#2f54eb; color:#fff; cursor:pointer; }
+    button.secondary { background:#777; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom:1px solid #f0f0f0; padding:8px; text-align:left; }
+    .error { color:#c0392b; }
+    .ok { color:#27ae60; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>超级设置</h1>
+
+    {% if not verified %}
+    <section class="card">
+      <h3>请输入超级密码</h3>
+      {% if error %}<p class="error">{{ error }}</p>{% endif %}
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="verify" />
+        <div class="row">
+          <div>
+            <label>超级密码</label>
+            <input type="password" name="password" placeholder="请输入超级密码" />
+          </div>
+        </div>
+        <div style="margin-top:12px"><button type="submit">验证</button></div>
+      </form>
+    </section>
+    {% else %}
+
+    <section class="card">
+      <h3>设置用户店铺代码与密钥</h3>
+      {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+      {% if error %}<p class="error">{{ error }}</p>{% endif %}
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="set_storekey" />
+        <div class="row">
+          <div>
+            <label>用户名（或手机号）</label>
+            <input type="text" name="username" placeholder="例如：chan 或 13800138000" />
+          </div>
+          <div>
+            <label>店铺代码</label>
+            <input type="text" name="store_code" placeholder="例如：US001" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label>密钥</label>
+            <input type="text" name="secret" placeholder="设置或更新该店铺密钥" />
+          </div>
+        </div>
+        <div style="margin-top:12px"><button type="submit">保存到数据库</button></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h3>已存在的店铺密钥</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>用户</th>
+            <th>店铺代码</th>
+            <th>密钥</th>
+            <th>时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sk in store_keys %}
+          <tr>
+            <td>{{ sk.user.username }}</td>
+            <td>{{ sk.store_code }}</td>
+            <td>{{ sk.secret }}</td>
+            <td>{{ sk.created_at|date:'Y-m-d H:i:s' }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4">暂无数据</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    {% endif %}
+  </main>
+</body>
+</html>
