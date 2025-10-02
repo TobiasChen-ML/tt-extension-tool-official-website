@@ -767,351 +767,6 @@ def rm_forbiden(request):
         'cleaned_text': cleaned,
         'removed': sorted(set(removed), key=lambda s: (-len(s), s.lower()))
     }})
-
-
-@csrf_exempt
-def clean_text_multi(request):
-    """
-    POST /api/words/clean_multi
-    body: {
-      "text": "...",
-      "categories": ["forbidden","brand","keyword"],
-      "hotwords": ""  # 新增，可选，默认为空字符串
-    }
-    """
-    if request.method != 'POST':
-        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
-
-    data = parse_json(request)
-    text = (data.get('text') or '')
-    if not text.strip():
-        return JsonResponse({'code': 400, 'msg': 'text不能为空'})
-
-    # 新增：热词参数，默认空字符串
-    hotwords = str(data.get('hotwords', '') or '').strip()
-
-    # 新增：当 categories 为空列表时，直接返回原文本与空结果
-    categories_param = data.get('categories')
-    if isinstance(categories_param, list) and len(categories_param) == 0:
-        cleaned = text
-        removed_tokens = []
-        removed_by_category = []
-        appended_keywords = []
-        return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
-            'cleaned_text': cleaned,
-            'removed_tokens': removed_tokens,
-            'removed_by_category': removed_by_category,
-            'appended_keywords': appended_keywords,
-        }})
-
-    # 解析参数
-    req_categories = categories_param or ['forbidden', 'brand', 'keyword']
-    req_categories = [str(c).strip().lower() for c in req_categories if str(c).strip()]
-    # 若 hotwords 非空，则移除 keyword 类别，不执行 keyword 相关逻辑
-    if hotwords:
-        req_categories = [c for c in req_categories if c != 'keyword']
-
-    import re
-    from django.db.models import Q
-    # 分词：按非字母数字与撇号拆分，保留较有意义的 token（长度>=2）
-    tokens = [t.lower() for t in re.split(r"[^A-Za-z0-9']+", text) if len(t) >= 2]
-    uniq_tokens = sorted(set(tokens))
-
-    # DeepSeek API（OpenAI兼容）判断同义助手
-    DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
-    def _is_synonym(a: str, b: str) -> bool:
-        # 若未配置密钥，降级为严格相似度判断
-        a1 = (a or '').strip().lower()
-        b1 = (b or '').strip().lower()
-        if not a1 or not b1:
-            return False
-        # 先用本地相似度快速过滤，避免无意义调用
-        ratio = difflib.SequenceMatcher(None, a1, b1).ratio()
-        if ratio >= 0.92:
-            return True
-        if not DEEPSEEK_API_KEY:
-            return False
-        try:
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "You are a strict synonym/equivalence checker. Reply only 'yes' or 'no'."},
-                    {"role": "user", "content": f"Are '{a1}' and '{b1}' synonyms or representing the same brand/company/product? Answer yes or no."}
-                ],
-                "stream": False
-            }
-            headers = {
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=6)
-            if resp.status_code == 200:
-                jr = resp.json()
-                content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip().lower()
-                return content.startswith('y') or ('yes' in content)
-        except Exception:
-            # 网络或API错误时，不判定为同义
-            return False
-        return False
-
-    # 模糊搜索候选（按 token 局部匹配），返回 [(phrase, category, score)]
-    def _fuzzy_candidates(token: str):
-        cands = []
-        # 词条
-        w_qs = Word.objects.select_related('category').filter(
-            is_active=True,
-            category__name__in=req_categories,
-            word__icontains=token
-        )[:200]
-        for w in w_qs:
-            s = (w.word or '').strip()
-            if not s:
-                continue
-            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
-            cands.append((s, w.category.name.lower(), score))
-        # 别名
-        a_qs = WordAlias.objects.select_related('word__category').filter(
-            word__category__name__in=req_categories,
-            alias__icontains=token
-        )[:200]
-        for a in a_qs:
-            s = (a.alias or '').strip()
-            if not s:
-                continue
-            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
-            cands.append((s, a.word.category.name.lower(), score))
-        # 选取得分较高的前若干个
-        cands.sort(key=lambda x: (-x[2], -len(x[0]), x[0].lower()))
-        return cands[:5]
-
-    cleaned = text
-    removed_tokens = []
-    removed_by_category = {c: [] for c in req_categories}
-
-    # 对每个 token：模糊搜索候选→DeepSeek判断同义→同义则删除该 token（按词边界）
-    for tk in uniq_tokens:
-        candidates = _fuzzy_candidates(tk)
-        # 仅当存在较相关候选时才尝试判断
-        if not candidates:
-            continue
-        # 若任一候选与该token同义/等价，则删除该token
-        synonym_hit = None
-        for phrase, cat, score in candidates:
-            # 先做分数门槛（避免过低匹配触发API）
-            if score < 0.6:
-                continue
-            # 仅对 forbidden 执行删除（品牌改为通过 DeepSeek 整体识别后统一删除）
-            if cat in ('forbidden',) and _is_synonym(tk, phrase):
-                synonym_hit = (phrase, cat)
-                break
-        if synonym_hit:
-            pattern = re.compile(rf"\b{re.escape(tk)}\b", flags=re.IGNORECASE)
-            if pattern.search(cleaned):
-                cleaned = pattern.sub('', cleaned)
-                removed_tokens.append(tk)
-                cat = synonym_hit[1]
-                removed_by_category.setdefault(cat, [])
-                removed_by_category[cat].append(tk)
-
-    # 品牌词：调用 DeepSeek API 从整段文本中抽取品牌词，并统一从原文本中移除
-    def _extract_brands_with_deepseek(full_text: str):
-        api_key = os.getenv('DEEPSEEK_API_KEY', '')
-        if not api_key or not (full_text or '').strip():
-            return []
-        try:
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "你是一个严格的品牌词抽取器。必须100%确认是品牌词才能提取，宁可漏判不可误判。，返回JSON数组。"},
-                    {"role": "user", "content": (
-                        "请从下面文本中找出品牌词，规则："
-                        "1) 排除规则优先：以下情况绝对不是品牌词："
-                        "   - 通用产品名称（如knife, tool, drill, machine等）"
-                        "   - 产品特性描述（如rainbow, cute, small, legal等）"
-                        "   - 产品用途描述（如self defense, camping, EDC等）"
-                        "   - 含数字的型号代码（如6655 R）"
-                        "   - 目标人群（如women, womens）"
-                        "   - 节日/场合（如birthday, gifts）"
-                        ""
-                        "2) 品牌词特征（符合2个及以上）："
-                        "   - 是专有名词，不是普通英文单词"
-                        "   - 在商业语境中已知是品牌名称"
-                        "   - 无法自然地直译成中文"
-                        "   - 不包含产品功能描述"
-                        "   - 一般全部都大写的单词或词组"
-                        ""
-                        "3) 严格标准："
-                        "   - 如果不确定100%是品牌词，就排除"
-                        "   - 只提取明确知名品牌的品牌名称"
-                        "   - 不要猜测或推断品牌"
-                        "4) 输出格式：严格返回JSON：{\"brands\": [\"brand1\", \"brand2\"]}，如果没有品牌词就返回空数组"
-                        f"文本：{full_text}"
-                    )}
-                ],
-                "stream": False
-            }
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=8)
-            if resp.status_code != 200:
-                return []
-            jr = resp.json()
-            content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip()
-            import json as _json
-            brands = []
-            try:
-                obj = _json.loads(content)
-                if isinstance(obj, dict) and isinstance(obj.get('brands'), list):
-                    brands = [str(x).strip() for x in obj.get('brands') if str(x).strip()]
-                elif isinstance(obj, list):
-                    brands = [str(x).strip() for x in obj if str(x).strip()]
-            except Exception:
-                # 宽松解析：逗号/换行分隔
-                parts = [p.strip() for p in re.split(r"[,]", content) if p.strip()]
-                brands = parts
-            # 过滤掉全数字/主要为数字的项
-            def _is_mostly_digits(s: str):
-                digits = sum(ch.isdigit() for ch in s)
-                return digits >= max(3, len(s) * 0.6)
-            brands = [b for b in brands if len(b) >= 2 and not _is_mostly_digits(b)]
-            return brands
-        except Exception:
-            return []
-
-    if 'brand' in req_categories:
-        brands = _extract_brands_with_deepseek(text)
-        if brands:
-            # 按长度降序移除，避免子串影响
-            phrases = sorted(set(b for b in brands if b), key=lambda s: (-len(s.strip()), s.lower()))
-            for p in phrases:
-                if not p:
-                    continue
-                # 使用词边界匹配，避免删除非品牌词的子串（如 Pineapple 中的 apple）
-                pattern = re.compile(rf"\b{re.escape(p)}\b", flags=re.IGNORECASE)
-                if pattern.search(cleaned):
-                    cleaned = pattern.sub('', cleaned)
-                    removed_tokens.append(p)
-                    removed_by_category.setdefault('brand', [])
-                    removed_by_category['brand'].append(p)
-
-    # 关键词：基于分词在 keyword 类别中模糊搜索最相关词并追加到文本末尾
-    appended_keywords = []
-
-    def _best_keyword_for_token(token: str):
-        cands = []
-        # 仅在 keyword 分类中查找
-        w_qs = Word.objects.select_related('category').filter(
-            is_active=True, category__name__iexact='keyword', word__icontains=token
-        )[:300]
-        for w in w_qs:
-            s = (w.word or '').strip()
-            if s:
-                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
-        a_qs = WordAlias.objects.select_related('word__category').filter(
-            word__category__name__iexact='keyword', alias__icontains=token
-        )[:300]
-        for a in a_qs:
-            s = (a.alias or '').strip()
-            if s:
-                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
-        if not cands:
-            return None
-        cands.sort(key=lambda x: (-x[1], -len(x[0]), x[0].lower()))
-        best = cands[0]
-        return best if best[1] >= 0.6 else None
-
-    # 仅对未被删除的 token 做关键词追加，降低噪声
-    tokens_for_keywords = [t for t in uniq_tokens if t not in set(removed_tokens)]
-    if 'keyword' in req_categories:
-        for tk in tokens_for_keywords:
-            m = _best_keyword_for_token(tk)
-            if not m:
-                continue
-            best_phrase = m[0]
-            if best_phrase and best_phrase.lower() not in [x.lower() for x in appended_keywords]:
-                # 末尾以空格追加一次
-                cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + best_phrase)
-                appended_keywords.append(best_phrase)
-
-    # 新增：在程序末尾确保 hotwords 中每个词都包含在 cleaned 中
-    if hotwords:
-        for w in [x for x in hotwords.split(' ') if x.strip()]:
-            # 用词边界判断是否已存在，避免子串误判
-            if not re.search(rf"\b{re.escape(w)}\b", cleaned, flags=re.IGNORECASE):
-                cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + w)
-
-    # 去重与排序清理
-    removed_tokens = sorted(set(removed_tokens), key=lambda s: (-len(s), s.lower()))
-    for c in list(removed_by_category.keys()):
-        removed_by_category[c] = sorted(set(removed_by_category[c]), key=lambda s: (-len(s), s.lower()))
-
-    # 智能长度裁剪：确保 cleaned_text 不超过 255 字符
-    def _smart_trim(text: str):
-        if len(text) <= 250:
-            return text
-        import re
-        # 分词，保留原大小写用于保留度判断
-        tokens = [t for t in re.split(r"[^A-Za-z0-9']+", text) if len(t) >= 1]
-        if not tokens:
-            return text[:250]
-        # 停用词（英文常见介词/连词/语气词）
-        stopwords = {
-            'a','an','the','and','or','but','if','then','than','so','too','very','just','really','quite','rather','some','any',
-            'in','on','at','by','for','to','of','from','with','without','about','into','over','under','between','among','through','during',
-            'up','down','out','off','again','still','ever','never','not','no','yes','as','is','are','was','were','be','been','being',
-            'this','that','these','those','here','there','now','today','yesterday','tomorrow','i','you','he','she','it','we','they'
-        }
-        # 计算每个词的重要度：是否为关键词、是否在 removed_tokens 中、长度、是否停用词
-        import collections
-        Counter = collections.Counter
-        freq = Counter([t.lower() for t in tokens])
-        # 保护已追加的关键词与 hotwords（若存在），避免被裁剪优先移除
-        appended_set = {k.lower() for k in appended_keywords} | {w.lower() for w in (hotwords.split(' ') if hotwords else []) if w.strip()}
-        removed_set = {k.lower() for k in removed_tokens}
-        def importance(t: str):
-            tl = t.lower()
-            score = 0
-            # 关键词/热词加权
-            if tl in appended_set:
-                score += 3
-            # 被删除过的词（通常是敏感/品牌）若仍出现，避免误删，适度加权
-            if tl in removed_set:
-                score += 2
-            # 词长、频次
-            score += min(len(t), 10) * 0.3
-            score += min(freq[tl], 5) * 0.5
-            # 停用词降权
-            if tl in stopwords:
-                score -= 3
-            return score
-        # 生成移除顺序：先删除重要度低的、再短的、再频次低的
-        order = sorted([(t, importance(t)) for t in tokens], key=lambda x: (x[1], len(x[0]), freq[x[0].lower()]))
-        # 逐步移除词（仅在文本中替换一次），直到长度<=255
-        trimmed = text
-        for t, _ in order:
-            if len(trimmed) <= 255:
-                break
-            # 以词边界移除一次出现，避免数字/撇号破坏
-            pattern = re.compile(rf"\b{re.escape(t)}\b")
-            trimmed_new = pattern.sub('', trimmed, count=1)
-            if trimmed_new != trimmed:
-                trimmed = trimmed_new
-        # 如果仍超长，做末尾截断（保留完整词边界尽量）
-        return trimmed[:255]
-
-    # 根据 hotwords 非空决定是否进行长度裁剪到255
-    if hotwords:
-        cleaned = _smart_trim(cleaned)
-    # 移除amazon相关字符(不区分大小写)
-    cleaned = cleaned.replace('amazon', '').replace('AMAZON', '').replace('Amazon', '')
-
-    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {
-        'cleaned_text': cleaned,
-        'removed_tokens': removed_tokens,
-        'removed_by_category': removed_by_category,
-        'appended_keywords': appended_keywords,
-    }})
-
-
 def send_code(request):
     phone = request.GET.get('phone')
     if not phone:
@@ -1597,4 +1252,266 @@ def clean_text_multi(request):
         "appended_keywords": appended_keywords,
     })
 
+
+def privacy(request):
+    return render(request, 'privacy.html')
+
+@csrf_exempt
+def clean_text_multi_batch(request):
+    """
+    POST /api/words/clean_multi/batch
+    body: {
+      "texts": ["...", "..."],
+      "categories": ["forbidden","brand","keyword"],
+      "hotwords": ""  # 可选，若非空则不追加 keyword 类别
+    }
+    返回：{code, msg, data: {result: {原text: 修改后的text}}}
+    若修改后为空字符串则返回空字符串。
+    """
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+
+    data = parse_json(request)
+    texts = data.get('texts') or data.get('text_list') or []
+    if not isinstance(texts, list) or len(texts) == 0:
+        return JsonResponse({'code': 400, 'msg': 'texts必须为非空列表'})
+
+    categories_param = data.get('categories') or ['forbidden', 'brand', 'keyword']
+    req_categories = [str(c).strip().lower() for c in categories_param if str(c).strip()]
+    hotwords_global = str(data.get('hotwords', '') or '').strip()
+    if hotwords_global:
+        req_categories = [c for c in req_categories if c != 'keyword']
+
+    import re, difflib, os, requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
+
+    def _is_synonym(a: str, b: str) -> bool:
+        a1 = (a or '').strip().lower()
+        b1 = (b or '').strip().lower()
+        if not a1 or not b1:
+            return False
+        ratio = difflib.SequenceMatcher(None, a1, b1).ratio()
+        if ratio >= 0.92:
+            return True
+        if not DEEPSEEK_API_KEY:
+            return False
+        try:
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "You are a strict synonym/equivalence checker. Reply only 'yes' or 'no'."},
+                    {"role": "user", "content": f"Are '{a1}' and '{b1}' synonyms or representing the same brand/company/product? Answer yes or no."}
+                ],
+                "stream": False
+            }
+            headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=6)
+            if resp.status_code == 200:
+                jr = resp.json()
+                content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip().lower()
+                return content.startswith('y') or ('yes' in content)
+        except Exception:
+            return False
+        return False
+
+    def _fuzzy_candidates(token: str):
+        cands = []
+        w_qs = Word.objects.select_related('category').filter(
+            is_active=True,
+            category__name__in=req_categories,
+            word__icontains=token
+        )[:200]
+        for w in w_qs:
+            s = (w.word or '').strip()
+            if not s:
+                continue
+            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
+            cands.append((s, w.category.name.lower(), score))
+        a_qs = WordAlias.objects.select_related('word__category').filter(
+            word__category__name__in=req_categories,
+            alias__icontains=token
+        )[:200]
+        for a in a_qs:
+            s = (a.alias or '').strip()
+            if not s:
+                continue
+            score = difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()
+            cands.append((s, a.word.category.name.lower(), score))
+        cands.sort(key=lambda x: (-x[2], -len(x[0]), x[0].lower()))
+        return cands[:5]
+
+    def _extract_brands_with_deepseek(full_text: str):
+        api_key = DEEPSEEK_API_KEY
+        if not api_key or not (full_text or '').strip():
+            return []
+        try:
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "你是一个严格的品牌词抽取器。必须100%确认是品牌词才能提取，宁可漏判不可误判。返回JSON数组。"},
+                    {"role": "user", "content": (
+                        "请从下面文本中找出品牌词，严格排除通用产品词/功能词/型号/节日等。"
+                        "输出格式：{\"brands\": [\"brand1\", \"brand2\"]}。"
+                        f"文本：{full_text}"
+                    )}
+                ],
+                "stream": False
+            }
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=8)
+            if resp.status_code != 200:
+                return []
+            jr = resp.json()
+            content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip()
+            import json as _json
+            brands = []
+            try:
+                obj = _json.loads(content)
+                if isinstance(obj, dict) and isinstance(obj.get('brands'), list):
+                    brands = [str(x).strip() for x in obj.get('brands') if str(x).strip()]
+                elif isinstance(obj, list):
+                    brands = [str(x).strip() for x in obj if str(x).strip()]
+            except Exception:
+                parts = [p.strip() for p in re.split(r"[,\n]", content) if p.strip()]
+                brands = parts
+            def _is_mostly_digits(s: str):
+                digits = sum(ch.isdigit() for ch in s)
+                return digits >= max(3, len(s) * 0.6)
+            brands = [b for b in brands if len(b) >= 2 and not _is_mostly_digits(b)]
+            return brands
+        except Exception:
+            return []
+
+    def _best_keyword_for_token(token: str):
+        cands = []
+        w_qs = Word.objects.select_related('category').filter(
+            is_active=True, category__name__iexact='keyword', word__icontains=token
+        )[:300]
+        for w in w_qs:
+            s = (w.word or '').strip()
+            if s:
+                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
+        a_qs = WordAlias.objects.select_related('word__category').filter(
+            word__category__name__iexact='keyword', alias__icontains=token
+        )[:300]
+        for a in a_qs:
+            s = (a.alias or '').strip()
+            if s:
+                cands.append((s, difflib.SequenceMatcher(None, token.lower(), s.lower()).ratio()))
+        if not cands:
+            return None
+        cands.sort(key=lambda x: (-x[1], -len(x[0]), x[0].lower()))
+        best = cands[0]
+        return best if best[1] >= 0.6 else None
+
+    def _smart_trim(text: str):
+        t = (text or '').strip()
+        if len(t) <= 255:
+            return t
+        return t[:255].rstrip()
+
+    def _process_one(original_text: str) -> str:
+        text = (original_text or '')
+        # 短路规则：若出现以下短语，则清洗结果为空字符串
+        lower = text.lower()
+        if (
+            'add to cart' in lower or
+            'customer reviews' in lower or
+            'price' in lower or
+            '— no data' in lower or  # 全角破折号
+            '- no data' in lower or  # 半角短横
+            'amazon' in lower
+        ):
+            return ''
+        # 价格模式：例如 "$14.99"、"$ 14. 99" 或仅 "$"
+        try:
+            if re.fullmatch(r"\s*\$\s*(?:[\d,]+(?:\s*\.\s*\d+)?\s*)?$", text):
+                return ''
+        except Exception:
+            pass
+        # 通用星级格式：如 "4.7 out of 5 stars"
+        try:
+            stars_pat = re.compile(r"\b\d+(?:\.\d+)?\s+out\s+of\s+\d+\s+stars\b", flags=re.IGNORECASE)
+            if stars_pat.search(text):
+                return ''
+        except Exception:
+            pass
+        # 数字型元素（仅数字、逗号、小数点），作为列表项时应去掉
+        try:
+            if re.fullmatch(r"\s*[\d,\.]+\s*", text):
+                return ''
+        except Exception:
+            pass
+        cleaned = text
+        # 分词
+        tokens = [t.lower() for t in re.split(r"[^A-Za-z0-9']+", text) if len(t) >= 2]
+        uniq_tokens = sorted(set(tokens))
+
+        # 删除违禁词（按词边界）
+        removed_tokens = []
+        for tk in uniq_tokens:
+            candidates = _fuzzy_candidates(tk)
+            if not candidates:
+                continue
+            for phrase, cat, score in candidates:
+                if score < 0.6:
+                    continue
+                if cat in ('forbidden',) and _is_synonym(tk, phrase):
+                    pattern = re.compile(rf"\b{re.escape(tk)}\b", flags=re.IGNORECASE)
+                    if pattern.search(cleaned):
+                        cleaned = pattern.sub('', cleaned)
+                        removed_tokens.append(tk)
+                    break
+
+        # 品牌词统一抽取并删除
+        if 'brand' in req_categories:
+            brands = _extract_brands_with_deepseek(text)
+            if brands:
+                phrases = sorted(set(b for b in brands if b), key=lambda s: (-len(s.strip()), s.lower()))
+                for p in phrases:
+                    pattern = re.compile(rf"\b{re.escape(p)}\b", flags=re.IGNORECASE)
+                    if pattern.search(cleaned):
+                        cleaned = pattern.sub('', cleaned)
+
+        # 关键词追加（若允许）
+        if 'keyword' in req_categories:
+            for tk in [t for t in uniq_tokens if t not in set(removed_tokens)]:
+                m = _best_keyword_for_token(tk)
+                if not m:
+                    continue
+                best_phrase = m[0]
+                if best_phrase:
+                    cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + best_phrase)
+
+        # hotwords 全局追加
+        if hotwords_global:
+            for w in [x for x in hotwords_global.split(' ') if x.strip()]:
+                if not re.search(rf"\b{re.escape(w)}\b", cleaned, flags=re.IGNORECASE):
+                    cleaned = (cleaned.rstrip() + (' ' if cleaned and not cleaned.endswith(' ') else '') + w)
+
+        # 统一处理 amazon 文本
+        cleaned = cleaned.replace('amazon', '').replace('AMAZON', '').replace('Amazon', '')
+        cleaned = _smart_trim(cleaned)
+        return cleaned
+
+    from collections import OrderedDict
+    results = [None] * len(texts)
+    max_workers = min(4, len(texts))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(_process_one, texts[i]): i for i in range(len(texts))}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                cleaned = fut.result() or ''
+            except Exception:
+                cleaned = ''
+            results[idx] = cleaned
+
+    result_map = OrderedDict()
+    for i, t in enumerate(texts):
+        result_map[t] = results[i] or ''
+
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'result': result_map}})
 

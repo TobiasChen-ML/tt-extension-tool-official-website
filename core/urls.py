@@ -8,6 +8,7 @@ urlpatterns = [
     path('logout/', views.logout_view, name='logout'),
     path('dashboard/', views.dashboard, name='dashboard'),
     path('recharge/', views.recharge, name='recharge'),
+    path('privacy/', views.privacy, name='privacy'),
 
     # 标准化词库 APIs
     path('api/categories/', views.categories, name='categories'),
@@ -17,6 +18,11 @@ urlpatterns = [
     path('api/words/rm_forbiden', views.rm_forbiden),
     path('api/words/rm_brand', views.rm_brand),
     path('api/words/clean_multi', views.clean_text_multi),
+    # 新增：批量商品词分类与提取
+    path('api/words/clean_multi/batch', views.clean_text_multi_batch),
+
+
+
     path('api/analyze-text', views.analyze_text, name='analyze_text'),
 
     # 新增：积分调整接口
