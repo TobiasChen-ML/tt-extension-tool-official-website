@@ -41,4 +41,7 @@ urlpatterns = [
 
     # 新增：客户有效性校验接口
     path('api/is_valid_customer', views.is_valid_customer),
+
+    # 新增：识别图片是否带品牌
+    path('api/image/has_brand/', views.image_has_brand, name='image_has_brand'),
 ]

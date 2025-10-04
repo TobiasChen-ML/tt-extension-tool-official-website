@@ -19,6 +19,11 @@ load_dotenv()
 # 简单的内存存储验证码，生产使用请改为缓存/Redis
 SMS_CODE_STORE = {}
 
+# 轻量缓存：品牌识别模型（按 artifacts 路径与配置缓存）
+_BRAND_MODEL_CACHE = {}
+# 默认模型根目录（可自动在其中查找含 metadata.json 的子目录）
+DEFAULT_BRAND_ARTIFACTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'artifacts')
+
 
 def home(request):
     products = Product.objects.all()
@@ -1512,6 +1517,195 @@ def clean_text_multi_batch(request):
     result_map = OrderedDict()
     for i, t in enumerate(texts):
         result_map[t] = results[i] or ''
+
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'result': result_map}})
+
+
+@csrf_exempt
+def image_has_brand(request):
+    """
+    POST /api/image/has_brand/
+    body: { "urls": ["http://...", "file:///E:/...", "E:/local/path.jpg"] }
+
+    可选：支持环境/配置提供模型根目录 `BRAND_MODEL_ARTIFACTS`，默认指向项目 `artifacts/`，
+    会在其中自动查找包含 `metadata.json` 与 `best_ts.pt` 的子目录（优先 resnet18_best）。
+
+    返回：{ code: 0, msg: 'ok', data: { result: { url: boolean, ... } } }
+    """
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+
+    data = parse_json(request)
+    urls = data.get('urls') or []
+    if isinstance(urls, str):
+        urls = [urls]
+    if not isinstance(urls, list) or not urls:
+        return JsonResponse({'code': 400, 'msg': 'urls 必须为非空数组'})
+
+    artifacts_dir = (
+        data.get('model_artifacts') or
+        os.getenv('BRAND_MODEL_ARTIFACTS') or
+        getattr(settings, 'BRAND_MODEL_ARTIFACTS', '') or
+        DEFAULT_BRAND_ARTIFACTS
+    )
+    use_torchscript = bool(data.get('use_torchscript', True))
+    quantize = bool(data.get('quantize', False))
+    override_img_size = data.get('img_size')
+
+    if not (artifacts_dir or '').strip():
+        return JsonResponse({'code': 400, 'msg': 'model_artifacts 未配置（请求体、环境或 settings 中必须提供）'})
+
+    try:
+        import torch
+        from PIL import Image
+        from torchvision import transforms
+        from urllib.parse import urlparse
+        import tempfile
+    except Exception as e:
+        return JsonResponse({'code': 500, 'msg': f'依赖缺失：{str(e)}'})
+
+    def _build_val_transform(img_size: int):
+        return transforms.Compose([
+            transforms.Resize(int(img_size * 1.2)),
+            transforms.CenterCrop(img_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+    def _load_metadata(model_dir: str):
+        meta_path = os.path.join(model_dir, 'metadata.json')
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def _resolve_model_dir(base_path: str) -> str:
+        """给定根目录，返回具体模型目录（包含 metadata.json 与 best_ts.pt）。"""
+        base_path = os.path.abspath(base_path)
+        meta_here = os.path.join(base_path, 'metadata.json')
+        ts_here = os.path.join(base_path, 'best_ts.pt')
+        if os.path.isfile(meta_here) and os.path.isfile(ts_here):
+            return base_path
+        # 扫描子目录
+        candidates = []
+        try:
+            for name in os.listdir(base_path):
+                p = os.path.join(base_path, name)
+                if os.path.isdir(p):
+                    if os.path.isfile(os.path.join(p, 'metadata.json')) and os.path.isfile(os.path.join(p, 'best_ts.pt')):
+                        candidates.append(p)
+        except Exception:
+            pass
+        if not candidates:
+            raise FileNotFoundError(f'未在 {base_path} 找到包含 metadata.json 与 best_ts.pt 的模型目录')
+        # 优先选择包含 "resnet18_best" 的目录
+        preferred = [c for c in candidates if 'resnet18_best' in os.path.basename(c)]
+        return (preferred[0] if preferred else candidates[0])
+
+    model_dir = _resolve_model_dir(artifacts_dir)
+
+    def _get_model_and_tf():
+        key = (model_dir, use_torchscript, quantize, override_img_size or '__meta__')
+        cached = _BRAND_MODEL_CACHE.get(key)
+        if cached:
+            return cached
+
+        meta = _load_metadata(model_dir)
+        model_name = meta.get('model_name')
+        class_names = meta.get('class_names') or []
+        img_size = int(override_img_size or meta.get('img_size') or 224)
+
+        if use_torchscript:
+            ts_path = os.path.join(model_dir, 'best_ts.pt')
+            if not os.path.isfile(ts_path):
+                raise FileNotFoundError('best_ts.pt not found')
+            model = torch.jit.load(ts_path, map_location='cpu')
+            model.eval()
+        else:
+            # 非 torchscript 加载需要提供 create_model 工厂，当前后端不内置该函数
+            raise NotImplementedError('非 torchscript 模式暂不支持（请提供 best_ts.pt 或设置 use_torchscript=true）')
+
+        tf = _build_val_transform(img_size)
+        cached = (model, tf, class_names)
+        _BRAND_MODEL_CACHE[key] = cached
+        return cached
+
+    def _infer_image(model, tf, image_path: str, class_names):
+        img = Image.open(image_path).convert('RGB')
+        x = tf(img).unsqueeze(0)
+        with torch.no_grad():
+            logits = model(x)
+            probs = torch.softmax(logits, dim=1)[0]
+            pred = torch.argmax(probs).item()
+        label = class_names[pred] if 0 <= pred < len(class_names) else str(pred)
+        return pred, label, probs.cpu().tolist()
+
+    # 加载模型（一次）
+    try:
+        torch.set_num_threads(max(1, os.cpu_count() or 1))
+        model, tf, class_names = _get_model_and_tf()
+    except FileNotFoundError as e:
+        return JsonResponse({'code': 404, 'msg': f'模型文件缺失：{str(e)}'})
+    except Exception as e:
+        return JsonResponse({'code': 500, 'msg': f'模型初始化失败：{str(e)}'})
+
+    results = []
+    for u in urls:
+        path = str(u or '')
+        if not path:
+            results.append({'path': u, 'error': 'empty url'})
+            continue
+
+        temp_path = None
+        try:
+            parsed = urlparse(path)
+            if parsed.scheme in ('file', ''):
+                # file URL 或本地路径（Windows 兼容）
+                if parsed.scheme == 'file':
+                    if parsed.netloc:
+                        local_path = (parsed.netloc + parsed.path).lstrip('/')
+                    else:
+                        local_path = parsed.path.lstrip('/')
+                    local_path = local_path.replace('/', os.sep)
+                else:
+                    local_path = path
+                pred_idx, label, probs = _infer_image(model, tf, local_path, class_names)
+                # 类别 0 = 无品牌；1/2 = 有品牌
+                has_brand = (pred_idx in (1, 2))
+                results.append({'path': u, 'label_idx': pred_idx, 'label': label, 'probs': probs, 'has_brand': has_brand})
+            elif parsed.scheme in ('http', 'https'):
+                with requests.get(path, timeout=15, stream=True) as r:
+                    r.raise_for_status()
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            if chunk:
+                                tmp.write(chunk)
+                        temp_path = tmp.name
+                pred_idx, label, probs = _infer_image(model, tf, temp_path, class_names)
+                # 类别 0 = 无品牌；1/2 = 有品牌
+                has_brand = (pred_idx in (1, 2))
+                results.append({'path': u, 'label_idx': pred_idx, 'label': label, 'probs': probs, 'has_brand': has_brand})
+            else:
+                results.append({'path': u, 'error': f'unsupported scheme: {parsed.scheme or "<none>"}'})
+        except Exception as e:
+            results.append({'path': u, 'error': str(e)})
+        finally:
+            if temp_path:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
+    # 构造按输入顺序的布尔映射 { url: true/false }
+    from collections import OrderedDict
+    result_map = OrderedDict()
+    for i, u in enumerate(urls):
+        r = results[i] if i < len(results) else {'error': 'unknown'}
+        ok = False
+        if 'error' not in r:
+            try:
+                ok = int(r.get('label_idx', 0)) in (1, 2)
+            except Exception:
+                ok = False
+        result_map[str(u)] = ok
 
     return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'result': result_map}})
 
