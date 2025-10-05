@@ -157,7 +157,7 @@ def words_classification(request):
         }
         try:
             resp = requests.post('https://api.deepseek.com/beta/chat/completions',
-                                    headers=headers, json=payload, timeout=10)
+                                    headers=headers, json=payload, timeout=20)
             if resp.ok:
                 rj = resp.json()
                 text = (rj.get('choices') or [{}])[0].get('message', {}).get('content', '') or ''
@@ -1042,7 +1042,7 @@ def clean_text_multi(request):
                 "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json"
             }
-            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=6)
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=15)
             if resp.status_code == 200:
                 jr = resp.json()
                 content = str(jr.get('choices', [{}])[0].get('message', {}).get('content', '')).strip().lower()
@@ -1150,7 +1150,7 @@ def clean_text_multi(request):
                 "stream": False
             }
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=8)
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=20)
             if resp.status_code != 200:
                 return []
             jr = resp.json()
@@ -1278,6 +1278,8 @@ def clean_text_multi_batch(request):
 
     data = parse_json(request)
     texts = data.get('texts') or data.get('text_list') or []
+    print(texts)
+    print(type(texts),isinstance(texts, list))
     if not isinstance(texts, list) or len(texts) == 0:
         return JsonResponse({'code': 400, 'msg': 'texts必须为非空列表'})
 
@@ -1365,7 +1367,7 @@ def clean_text_multi_batch(request):
                 "stream": False
             }
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=8)
+            resp = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=20)
             if resp.status_code != 200:
                 return []
             jr = resp.json()
@@ -1498,7 +1500,7 @@ def clean_text_multi_batch(request):
 
         # 统一处理 amazon 文本
         cleaned = cleaned.replace('amazon', '').replace('AMAZON', '').replace('Amazon', '')
-        cleaned = _smart_trim(cleaned)
+        # cleaned = _smart_trim(cleaned)
         return cleaned
 
     from collections import OrderedDict
@@ -1517,7 +1519,7 @@ def clean_text_multi_batch(request):
     result_map = OrderedDict()
     for i, t in enumerate(texts):
         result_map[t] = results[i] or ''
-
+    print("response:aa,",result_map)
     return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'result': result_map}})
 
 
