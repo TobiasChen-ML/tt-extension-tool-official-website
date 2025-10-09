@@ -5,6 +5,14 @@ class CoreConfig(AppConfig):
     name = 'core'
 
     def ready(self):
+        # 启动时预加载品牌识别模型，减少首个请求的初始化开销
+        try:
+            from .views import preload_brand_model_on_startup
+            preload_brand_model_on_startup()
+        except Exception:
+            # 预加载失败不影响应用启动（惰性加载仍可用）
+            pass
+
         from django.db.models.signals import post_migrate
         from django.contrib.auth import get_user_model
         from django.db import connection

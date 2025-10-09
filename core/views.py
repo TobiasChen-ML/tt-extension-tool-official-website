@@ -139,7 +139,7 @@ def words_classification(request):
                     "输出：Waist Trainer,Waist Trimmer\n"
                     "\n"
                     "【要求】\n"
-                    "- 仅输出最终提取出的商品名词，用英文逗号隔开，不要解释。控制数量少于20个。\n"
+                    "- 仅输出最终提取出的商品名词，用英文逗号隔开，不要解释。控制数量少于30个。\n"
                 f'- 现在请处理我的输入：{", ".join([str(w) for w in hotwords])}'
         )
         payload = {
