@@ -1430,7 +1430,8 @@ def clean_text_multi_batch(request):
             '— no data' in lower or  # 全角破折号
             '- no data' in lower or  # 半角短横
             'amazon' in lower or 
-            'from the brand' in lower
+            'from the brand' in lower or 
+            'Amazon.com' in lower
         ):
             return ''
         # 价格模式：例如 "$14.99"、"$ 14. 99" 或仅 "$"
@@ -1459,6 +1460,35 @@ def clean_text_multi_batch(request):
         except Exception:
             pass
 
+        # 规格/维度类标题：这些行直接清空
+        try:
+            if re.fullmatch(r"\s*(number\s+of\s+functions|size|weight|blade\s+length)\s*", text, flags=re.IGNORECASE):
+                return ''
+        except Exception:
+            pass
+
+        # 规格值：数字 + 单位（mm/cm/in/oz/g/kg/双引号/两个单引号）
+        try:
+            unit_pat = re.compile(r"^\s*\d+(?:\.\d+)?\s*(mm|cm|m|in(?:ch)?|\"|''|oz|g|kg)\s*$", flags=re.IGNORECASE)
+            if unit_pat.fullmatch(text):
+                return ''
+        except Exception:
+            pass
+
+        # 型号/代码：字母+数字，可带结尾点（如 N7.）
+        try:
+            if re.fullmatch(r"\s*[A-Za-z]\d+\.?\s*", text):
+                return ''
+        except Exception:
+            pass
+
+        # 单字母或 1-2 个中文字符的孤立行（如 'S'、'力'、'少'）
+        try:
+            if re.fullmatch(r"\s*[A-Za-z]\s*", text):
+                return ''
+        except Exception:
+            pass
+
 
         cleaned = text
         # 分词
@@ -1472,7 +1502,7 @@ def clean_text_multi_batch(request):
             if not candidates:
                 continue
             for phrase, cat, score in candidates:
-                if score < 0.6:
+                if score < 0.8:
                     continue
                 if cat in ('forbidden',) and _is_synonym(tk, phrase):
                     pattern = re.compile(rf"\b{re.escape(tk)}\b", flags=re.IGNORECASE)
