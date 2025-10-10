@@ -1429,7 +1429,8 @@ def clean_text_multi_batch(request):
             'price' in lower or
             '— no data' in lower or  # 全角破折号
             '- no data' in lower or  # 半角短横
-            'amazon' in lower
+            'amazon' in lower or 
+            'from the brand' in lower
         ):
             return ''
         # 价格模式：例如 "$14.99"、"$ 14. 99" 或仅 "$"
@@ -1451,6 +1452,14 @@ def clean_text_multi_batch(request):
                 return ''
         except Exception:
             pass
+        # 通用“更多”链接（如 "Find more"）
+        try:
+            if re.fullmatch(r"\s*find\s+more\s*", text, flags=re.IGNORECASE):
+                return ''
+        except Exception:
+            pass
+
+
         cleaned = text
         # 分词
         tokens = [t.lower() for t in re.split(r"[^A-Za-z0-9']+", text) if len(t) >= 2]
