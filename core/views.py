@@ -29,6 +29,10 @@ def home(request):
     products = Product.objects.all()
     return render(request, 'home.html', {'products': products})
 
+def opportunity(request):
+    products = Product.objects.all()
+    return render(request, 'home.html', {'products': products})
+
 
 def login_view(request):
     if request.method == 'POST':
@@ -1669,6 +1673,13 @@ def image_has_brand(request):
         _BRAND_MODEL_CACHE[key] = cached
         return cached
 
+    # 置信度阈值：最大概率低于该阈值时，强制归为 0 类
+    conf_threshold = 0.85
+    try:
+        conf_threshold = float(data.get('conf_threshold', os.getenv('BRAND_CONF_THRESHOLD', conf_threshold)))
+    except Exception:
+        pass
+
     def _infer_image(model, tf, image_path: str, class_names):
         img = Image.open(image_path).convert('RGB')
         x = tf(img).unsqueeze(0)
@@ -1676,6 +1687,9 @@ def image_has_brand(request):
             logits = model(x)
             probs = torch.softmax(logits, dim=1)[0]
             pred = torch.argmax(probs).item()
+            conf = float(probs[pred].item())
+            if conf < conf_threshold:
+                pred = 0
         label = class_names[pred] if 0 <= pred < len(class_names) else str(pred)
         return pred, label, probs.cpu().tolist()
 

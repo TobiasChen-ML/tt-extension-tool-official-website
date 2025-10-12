@@ -9,7 +9,7 @@ urlpatterns = [
     path('dashboard/', views.dashboard, name='dashboard'),
     path('recharge/', views.recharge, name='recharge'),
     path('privacy/', views.privacy, name='privacy'),
-
+    path('opportunity/', views.opportunity, name='opportunity'),
     # 标准化词库 APIs
     path('api/categories/', views.categories, name='categories'),
     path('api/words/', views.words, name='words'),
