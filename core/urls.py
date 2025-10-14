@@ -44,4 +44,7 @@ urlpatterns = [
 
     # 新增：识别图片是否带品牌
     path('api/image/has_brand/', views.image_has_brand, name='image_has_brand'),
+
+    #支付回调
+    path('wxpay/notify/', views.wxpay_notify, name='wxpay_notify'),
 ]

@@ -33,6 +33,25 @@ def opportunity(request):
     products = Product.objects.all()
     return render(request, 'home.html', {'products': products})
 
+from datetime import datetime,timezone
+@csrf_exempt
+def wxpay_notify(request):
+    if request.method == 'POST':
+        data = parse_json(request)
+        openid = data.get('openid')
+        # 先判断 Store code 是否已存在该 openid
+        if not StoreKey.objects.filter(store_code=openid).exists():
+            # 生成 32 位随机 secret
+            secret = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+            StoreKey.objects.create(
+                user='admin',
+                store_code=openid,
+                secret=secret,
+                created_at=datetime.now(timezone.utc),
+            )
+        return JsonResponse({'code': 0, 'msg': openid + ' success'})
+    return JsonResponse({'code': -1, 'msg': 'method not allowed'})
+
 
 def login_view(request):
     if request.method == 'POST':
@@ -1674,7 +1693,7 @@ def image_has_brand(request):
         return cached
 
     # 置信度阈值：最大概率低于该阈值时，强制归为 0 类
-    conf_threshold = 0.85
+    conf_threshold = 0.7
     try:
         conf_threshold = float(data.get('conf_threshold', os.getenv('BRAND_CONF_THRESHOLD', conf_threshold)))
     except Exception:
