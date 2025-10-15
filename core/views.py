@@ -39,16 +39,18 @@ def wxpay_notify(request):
     if request.method == 'POST':
         data = parse_json(request)
         openid = data.get('openid')
+     
         # 先判断 Store code 是否已存在该 openid
         if not StoreKey.objects.filter(store_code=openid).exists():
             # 生成 32 位随机 secret
             secret = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
             StoreKey.objects.create(
-                user='admin',
+                user=User.objects.get(username='admin'),
                 store_code=openid,
                 secret=secret,
                 created_at=datetime.now(timezone.utc),
             )
+            print("写",openid)
         return JsonResponse({'code': 0, 'msg': openid + ' success'})
     return JsonResponse({'code': -1, 'msg': 'method not allowed'})
 
@@ -146,7 +148,7 @@ def words_classification(request):
                     "3. 统计这些商品词在所有标题中出现的频率，只要出现频率较高（即在多条标题中重复出现），就应当保留。\n"
                     "4. 商品词必须是产品类别或核心物品名称，不要输出品牌、型号、形容词、用途或场景词。\n"
                     "5. 输出时至少包含一个商品名词，不能返回空结果。\n"
-                    "6. 输出格式：多个商品名词用英文逗号隔开。\n"
+                    "6. 输出格式：严格为一行文本，多个商品名词用英文逗号隔开（item1,item2,item3）。\n"
                     "\n"
                     "【示例】\n"
                     "输入：\n"
@@ -162,7 +164,13 @@ def words_classification(request):
                     "输出：Waist Trainer,Waist Trimmer\n"
                     "\n"
                     "【要求】\n"
-                    "- 仅输出最终提取出的商品名词，用英文逗号隔开，不要解释。控制数量少于30个。\n"
+                    "- 仅输出最终提取出的商品名词，不要解释，数量少于30个。\n"
+                    "- 只输出一行，格式为：item1,item2,item3。不要换行。\n"
+                    "- 禁止输出 JSON、列表、序号、项目符号（如 - 或 1.）、键值对或任何标签。\n"
+                    "- 不要出现引号（'\"）、括号（()）、方括号（[]）、花括号（{}）、反引号（`），不要冒号、分号、竖线或中文标点。\n"
+                    "- 仅用英文逗号分隔，逗号两侧可有一个空格但不强制。\n"
+                    "- 去重并统一为单数形式；同义词合并仅输出一个代表词。\n"
+                    "- 如果你的草稿是其他格式，请先转换为上述单行英文逗号分隔格式后再输出。\n"
                 f'- 现在请处理我的输入：{", ".join([str(w) for w in hotwords])}'
         )
         payload = {
