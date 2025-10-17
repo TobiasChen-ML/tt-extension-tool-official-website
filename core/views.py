@@ -54,6 +54,37 @@ def wxpay_notify(request):
         return JsonResponse({'code': 0, 'msg': openid + ' success'})
     return JsonResponse({'code': -1, 'msg': 'method not allowed'})
 
+@csrf_exempt
+def make_order_by_listing(request):
+    if request.method != 'POST':
+        return JsonResponse({'code': 405, 'msg': 'Method Not Allowed'})
+
+    data = parse_json(request)
+    shop_code = data.get('shop_code')
+    amount = data.get('amount')
+    if not shop_code or (amount is None):
+        return JsonResponse({'code': -1, 'msg': 'shop_code and amount are required'})
+
+    import requests
+    # 可通过环境变量覆盖上游接口地址，避免硬编码
+    url = os.getenv('ORDER_API_URL', 'https://vectorizer.cn/api/order/make_by_listing/')
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json={'shop_code': shop_code, 'amount': amount}, timeout=15)
+        # 优先解析为 JSON；若非 JSON 则回传文本
+        try:
+            payload = resp.json()
+            if isinstance(payload, dict):
+                return JsonResponse(payload, status=resp.status_code)
+            # 如果上游返回列表/字符串，包装为标准结构
+            return JsonResponse({'code': 0 if resp.ok else resp.status_code, 'msg': 'ok' if resp.ok else 'upstream error', 'data': payload}, status=resp.status_code)
+        except ValueError:
+            return JsonResponse({'code': resp.status_code, 'msg': resp.text}, status=resp.status_code)
+    except requests.exceptions.RequestException as e:
+        return JsonResponse({'code': 502, 'msg': f'upstream request failed: {str(e)}'})
 
 def login_view(request):
     if request.method == 'POST':
@@ -1022,7 +1053,7 @@ def clean_text_multi(request):
     # 新增：当 categories 为空列表时，直接返回原文本与空结果
     categories_param = data.get('categories')
     if isinstance(categories_param, list) and len(categories_param) == 0:
-        cleaned = text
+        cleaned = text.replace('Vaginal','').replace('tobacco','').replace('Vibrator','').replace('Hookah','').replace('vulva','')
         removed_tokens = []
         removed_by_category = []
         appended_keywords = []
