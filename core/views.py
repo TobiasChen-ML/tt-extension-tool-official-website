@@ -1053,7 +1053,7 @@ def clean_text_multi(request):
     # 新增：当 categories 为空列表时，直接返回原文本与空结果
     categories_param = data.get('categories')
     if isinstance(categories_param, list) and len(categories_param) == 0:
-        cleaned = text.replace('Vaginal','').replace('tobacco','').replace('Vibrator','').replace('Hookah','').replace('vulva','')
+        cleaned = text
         removed_tokens = []
         removed_by_category = []
         appended_keywords = []
@@ -1173,7 +1173,80 @@ def clean_text_multi(request):
                 removed_by_category.setdefault(cat, [])
                 removed_by_category[cat].append(tk)
 
-    # 品牌词：调用 DeepSeek API 从整段文本中抽取品牌词，并统一从原文本中移除
+    # 品牌词处理：先词库检索删除 → 翻译识别未译英文 → DeepSeek抽取
+    def _remove_brands_by_db_lookup(full_text: str):
+        import re
+        if not (full_text or '').strip():
+            return full_text, []
+        # 基于英文token做精确词库匹配（不区分大小写）
+        tokens = [t for t in re.split(r"[^A-Za-z0-9']+", full_text) if len(t) >= 2]
+        removed = []
+        for tk in sorted(set(tokens), key=lambda s: (-len(s), s.lower())):
+            try:
+                exists = Word.objects.select_related('category').filter(
+                    is_active=True, category__name__iexact='brand', word__iexact=tk
+                ).exists() or WordAlias.objects.select_related('word__category').filter(
+                    word__category__name__iexact='brand', alias__iexact=tk
+                ).exists()
+            except Exception:
+                exists = False
+            if exists:
+                pattern = re.compile(rf"\b{re.escape(tk)}\b", flags=re.IGNORECASE)
+                if pattern.search(full_text):
+                    full_text = pattern.sub('', full_text)
+                    removed.append(tk)
+        return full_text, removed
+
+    def _translate_to_zh_and_collect_untranslated_english(full_text: str):
+        # 使用免费开源翻译库（优先LibreTranslate，其次GoogleTranslator；若安装了Argos则离线）
+        zh_text = ''
+        english_left = []
+        try:
+            try:
+                from deep_translator import LibreTranslator
+                zh_text = LibreTranslator(source='en', target='zh').translate(full_text)
+            except Exception:
+                zh_text = ''
+            if not zh_text:
+                try:
+                    from deep_translator import GoogleTranslator
+                    zh_text = GoogleTranslator(source='en', target='zh-CN').translate(full_text)
+                except Exception:
+                    zh_text = ''
+            if not zh_text:
+                try:
+                    import argostranslate.package
+                    import argostranslate.translate
+                    installed_languages = argostranslate.translate.get_installed_languages()
+                    en_lang = next((l for l in installed_languages if 'English' in l.name or l.code == 'en'), None)
+                    zh_lang = next((l for l in installed_languages if 'Chinese' in l.name or l.code in ('zh','zh-cn','zh-CN')), None)
+                    if en_lang and zh_lang:
+                        zh_text = en_lang.get_translation(zh_lang).translate(full_text)
+                except Exception:
+                    zh_text = ''
+        except Exception:
+            zh_text = ''
+        import re
+        if zh_text:
+            english_left = [m.group(0) for m in re.finditer(r"[A-Za-z][A-Za-z0-9'&\-]{1,}", zh_text)]
+        else:
+            # 若翻译不可用，则回退：从原文本中提取可能的英文品牌（首字母大写或全大写）
+            english_left = [t for t in re.split(r"[^A-Za-z0-9']+", full_text) if len(t) >= 3 and (t[0].isupper() or t.isupper())]
+        def _mostly_digits(s: str):
+            digits = sum(ch.isdigit() for ch in s)
+            return digits >= max(3, int(len(s) * 0.6))
+        english_left = [x for x in english_left if not _mostly_digits(x)]
+        # 去重（忽略大小写）
+        uniq = []
+        seen = set()
+        for x in english_left:
+            k = x.lower()
+            if k not in seen:
+                uniq.append(x)
+                seen.add(k)
+        return zh_text, uniq
+
+    # DeepSeek 品牌词抽取（保留原实现）
     def _extract_brands_with_deepseek(full_text: str):
         api_key = os.getenv('DEEPSEEK_API_KEY', '')
         if not api_key or not (full_text or '').strip():
@@ -1239,7 +1312,27 @@ def clean_text_multi(request):
             return []
 
     if 'brand' in req_categories:
-        brands = _extract_brands_with_deepseek(text)
+        # 第1步：先检索 Word/WordAlias 词库并删除命中词（大小写不敏感）
+        cleaned, removed_db = _remove_brands_by_db_lookup(cleaned)
+        if removed_db:
+            removed_tokens.extend(removed_db)
+            removed_by_category.setdefault('brand', [])
+            removed_by_category['brand'].extend(removed_db)
+
+        # 第2步：将第1步结果翻译为中文，提取翻译结果中保留的英文片段（未能翻译的部分认定为品牌词），并从原句中删除
+        _, english_left = _translate_to_zh_and_collect_untranslated_english(cleaned)
+        if english_left:
+            phrases = sorted(set(english_left), key=lambda s: (-len(s.strip()), s.lower()))
+            for p in phrases:
+                pattern = re.compile(rf"\b{re.escape(p)}\b", flags=re.IGNORECASE)
+                if pattern.search(cleaned):
+                    cleaned = pattern.sub('', cleaned)
+                    removed_tokens.append(p)
+                    removed_by_category.setdefault('brand', [])
+                    removed_by_category['brand'].append(p)
+
+        # 第3步：将步骤2后的文本输入 DeepSeek，得到最终品牌词并删除
+        brands = _extract_brands_with_deepseek(cleaned)
         if brands:
             # 按长度降序移除，避免子串影响
             phrases = sorted(set(b for b in brands if b), key=lambda s: (-len(s.strip()), s.lower()))
