@@ -62,6 +62,7 @@ def make_order_by_listing(request):
     data = parse_json(request)
     shop_code = data.get('shop_code')
     amount = data.get('amount')
+    
     if not shop_code or (amount is None):
         return JsonResponse({'code': -1, 'msg': 'shop_code and amount are required'})
 
@@ -1184,7 +1185,7 @@ def clean_text_multi(request):
         for tk in sorted(set(tokens), key=lambda s: (-len(s), s.lower())):
             try:
                 exists = Word.objects.select_related('category').filter(
-                    is_active=True, category__name__iexact='brand', word__iexact=tk
+                    category__name__iexact='brand', word__iexact=tk
                 ).exists() or WordAlias.objects.select_related('word__category').filter(
                     word__category__name__iexact='brand', alias__iexact=tk
                 ).exists()
@@ -1227,11 +1228,11 @@ def clean_text_multi(request):
         except Exception:
             zh_text = ''
         import re
+        # 仅当翻译成功时，才从翻译结果中提取保留的英文片段；否则跳过第二步，避免启发式误删
         if zh_text:
             english_left = [m.group(0) for m in re.finditer(r"[A-Za-z][A-Za-z0-9'&\-]{1,}", zh_text)]
         else:
-            # 若翻译不可用，则回退：从原文本中提取可能的英文品牌（首字母大写或全大写）
-            english_left = [t for t in re.split(r"[^A-Za-z0-9']+", full_text) if len(t) >= 3 and (t[0].isupper() or t.isupper())]
+            english_left = []
         def _mostly_digits(s: str):
             digits = sum(ch.isdigit() for ch in s)
             return digits >= max(3, int(len(s) * 0.6))
@@ -1245,6 +1246,36 @@ def clean_text_multi(request):
                 uniq.append(x)
                 seen.add(k)
         return zh_text, uniq
+
+    def _is_common_non_brand_word(s: str) -> bool:
+        common = {
+            'change','coated','plates','rubber','weight','pairs','pair','set','lb','olympic',
+            'knife','tool','tools','drill','machine','rainbow','cute','small','legal',
+            'self','defense','camping','edc','women','womens','men','mens','birthday',
+            'gift','gifts','size','color','adapter','plug','charger','battery'
+        }
+        return (s or '').strip().lower() in common
+
+    def _is_likely_brand_candidate(token: str) -> bool:
+        t = (token or '').strip()
+        if len(t) < 3:
+            return False
+        if any(ch.isdigit() for ch in t):
+            return False
+        if _is_common_non_brand_word(t):
+            return False
+        # 若在 keyword/forbidden 中出现，则视为通用词而非品牌词
+        try:
+            is_common_db = Word.objects.select_related('category').filter(
+                is_active=True, category__name__in=['keyword','forbidden'], word__iexact=t
+            ).exists() or WordAlias.objects.select_related('word__category').filter(
+                word__category__name__in=['keyword','forbidden'], alias__iexact=t
+            ).exists()
+        except Exception:
+            is_common_db = False
+        if is_common_db:
+            return False
+        return True
 
     # DeepSeek 品牌词抽取（保留原实现）
     def _extract_brands_with_deepseek(full_text: str):
@@ -1324,6 +1355,9 @@ def clean_text_multi(request):
         if english_left:
             phrases = sorted(set(english_left), key=lambda s: (-len(s.strip()), s.lower()))
             for p in phrases:
+                # 仅删除符合品牌候选的英文片段，避免误删通用英文词
+                if not _is_likely_brand_candidate(p):
+                    continue
                 pattern = re.compile(rf"\b{re.escape(p)}\b", flags=re.IGNORECASE)
                 if pattern.search(cleaned):
                     cleaned = pattern.sub('', cleaned)
@@ -1546,6 +1580,105 @@ def clean_text_multi_batch(request):
         except Exception:
             return []
 
+    # 品牌词处理辅助：词库精确匹配删除（不区分大小写）
+    def _remove_brands_by_db_lookup(full_text: str):
+        import re
+        if not (full_text or '').strip():
+            return full_text, []
+        tokens = [t for t in re.split(r"[^A-Za-z0-9']+", full_text) if len(t) >= 2]
+        removed = []
+        for tk in sorted(set(tokens), key=lambda s: (-len(s), s.lower())):
+            try:
+                exists = Word.objects.select_related('category').filter(
+                    category__name__iexact='brand', word__iexact=tk
+                ).exists() or WordAlias.objects.select_related('word__category').filter(
+                    word__category__name__iexact='brand', alias__iexact=tk
+                ).exists()
+            except Exception:
+                exists = False
+            if exists:
+                pattern = re.compile(rf"\b{re.escape(tk)}\b", flags=re.IGNORECASE)
+                if pattern.search(full_text):
+                    full_text = pattern.sub('', full_text)
+                    removed.append(tk)
+        return full_text, removed
+
+    # 翻译为中文并提取保留的英文片段（仅翻译成功时执行）
+    def _translate_to_zh_and_collect_untranslated_english(full_text: str):
+        zh_text = ''
+        english_left = []
+        try:
+            try:
+                from deep_translator import LibreTranslator
+                zh_text = LibreTranslator(source='en', target='zh').translate(full_text)
+            except Exception:
+                zh_text = ''
+            if not zh_text:
+                try:
+                    from deep_translator import GoogleTranslator
+                    zh_text = GoogleTranslator(source='en', target='zh-CN').translate(full_text)
+                except Exception:
+                    zh_text = ''
+            if not zh_text:
+                try:
+                    import argostranslate.package
+                    import argostranslate.translate
+                    installed_languages = argostranslate.translate.get_installed_languages()
+                    en_lang = next((l for l in installed_languages if 'English' in l.name or l.code == 'en'), None)
+                    zh_lang = next((l for l in installed_languages if 'Chinese' in l.name or l.code in ('zh','zh-cn','zh-CN')), None)
+                    if en_lang and zh_lang:
+                        zh_text = en_lang.get_translation(zh_lang).translate(full_text)
+                except Exception:
+                    zh_text = ''
+        except Exception:
+            zh_text = ''
+        import re
+        if zh_text:
+            english_left = [m.group(0) for m in re.finditer(r"[A-Za-z][A-Za-z0-9'&\-]{1,}", zh_text)]
+        else:
+            english_left = []
+        def _mostly_digits(s: str):
+            digits = sum(ch.isdigit() for ch in s)
+            return digits >= max(3, int(len(s) * 0.6))
+        english_left = [x for x in english_left if not _mostly_digits(x)]
+        uniq = []
+        seen = set()
+        for x in english_left:
+            k = x.lower()
+            if k not in seen:
+                uniq.append(x)
+                seen.add(k)
+        return zh_text, uniq
+
+    def _is_common_non_brand_word(s: str) -> bool:
+        common = {
+            'change','coated','plates','rubber','weight','pairs','pair','set','lb','olympic',
+            'knife','tool','tools','drill','machine','rainbow','cute','small','legal',
+            'self','defense','camping','edc','women','womens','men','mens','birthday',
+            'gift','gifts','size','color','adapter','plug','charger','battery'
+        }
+        return (s or '').strip().lower() in common
+
+    def _is_likely_brand_candidate(token: str) -> bool:
+        t = (token or '').strip()
+        if len(t) < 3:
+            return False
+        if any(ch.isdigit() for ch in t):
+            return False
+        if _is_common_non_brand_word(t):
+            return False
+        try:
+            is_common_db = Word.objects.select_related('category').filter(
+                is_active=True, category__name__in=['keyword','forbidden'], word__iexact=t
+            ).exists() or WordAlias.objects.select_related('word__category').filter(
+                word__category__name__in=['keyword','forbidden'], alias__iexact=t
+            ).exists()
+        except Exception:
+            is_common_db = False
+        if is_common_db:
+            return False
+        return True
+
     def _best_keyword_for_token(token: str):
         cands = []
         w_qs = Word.objects.select_related('category').filter(
@@ -1666,9 +1799,22 @@ def clean_text_multi_batch(request):
                         removed_tokens.append(tk)
                     break
 
-        # 品牌词统一抽取并删除
+        # 品牌词处理：先词库检索删除 → 翻译识别未译英文 → DeepSeek抽取
         if 'brand' in req_categories:
-            brands = _extract_brands_with_deepseek(text)
+            # 第1步：词库检索并删除（大小写不敏感）
+            cleaned, _removed_db = _remove_brands_by_db_lookup(cleaned)
+            # 第2步：翻译为中文，提取保留的英文片段并删除（仅品牌候选）
+            _, english_left = _translate_to_zh_and_collect_untranslated_english(cleaned)
+            if english_left:
+                phrases = sorted(set(english_left), key=lambda s: (-len(s.strip()), s.lower()))
+                for p in phrases:
+                    if not _is_likely_brand_candidate(p):
+                        continue
+                    pattern = re.compile(rf"\b{re.escape(p)}\b", flags=re.IGNORECASE)
+                    if pattern.search(cleaned):
+                        cleaned = pattern.sub('', cleaned)
+            # 第3步：DeepSeek 抽取品牌词并删除（基于步骤2后的文本）
+            brands = _extract_brands_with_deepseek(cleaned)
             if brands:
                 phrases = sorted(set(b for b in brands if b), key=lambda s: (-len(s.strip()), s.lower()))
                 for p in phrases:
@@ -1792,8 +1938,8 @@ def image_has_brand(request):
             pass
         if not candidates:
             raise FileNotFoundError(f'未在 {base_path} 找到包含 metadata.json 与 best_ts.pt 的模型目录')
-        # 优先选择包含 "resnet18_best" 的目录
-        preferred = [c for c in candidates if 'resnet18_best' in os.path.basename(c)]
+        # 优先选择包含 "resnet34_best" 的目录
+        preferred = [c for c in candidates if 'resnet34_best' in os.path.basename(c)]
         return (preferred[0] if preferred else candidates[0])
 
     model_dir = _resolve_model_dir(artifacts_dir)
@@ -1824,13 +1970,6 @@ def image_has_brand(request):
         _BRAND_MODEL_CACHE[key] = cached
         return cached
 
-    # 置信度阈值：最大概率低于该阈值时，强制归为 0 类
-    conf_threshold = 0.7
-    try:
-        conf_threshold = float(data.get('conf_threshold', os.getenv('BRAND_CONF_THRESHOLD', conf_threshold)))
-    except Exception:
-        pass
-
     def _infer_image(model, tf, image_path: str, class_names):
         img = Image.open(image_path).convert('RGB')
         x = tf(img).unsqueeze(0)
@@ -1838,11 +1977,74 @@ def image_has_brand(request):
             logits = model(x)
             probs = torch.softmax(logits, dim=1)[0]
             pred = torch.argmax(probs).item()
-            conf = float(probs[pred].item())
-            if conf < conf_threshold:
-                pred = 0
         label = class_names[pred] if 0 <= pred < len(class_names) else str(pred)
         return pred, label, probs.cpu().tolist()
+
+    # --- YOLO 检测辅助：当分类为0时，用于检测 logo ---
+    def _find_best_yolo_weights(root_dir: str):
+        import glob
+        pattern = os.path.join(root_dir, 'runs', 'train', '**', 'weights', 'best.pt')
+        candidates = glob.glob(pattern, recursive=True)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        return candidates[0]
+
+    def _yolo_infer_image(
+        image_path: str,
+        weights: None | str = None,
+        conf: float = 0.25,
+        iou: float = 0.45,
+        imgsz: int = 640,
+        device: None | str = None,
+    ):
+        try:
+            import numpy as np
+            from ultralytics import YOLO
+        except Exception as e:
+            # YOLO 未安装或导入失败，返回空检测
+            return []
+        # 项目根目录
+        PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        selected_weights = (
+            weights
+            or _find_best_yolo_weights(PROJECT_ROOT)
+            or 'yolov8n.pt'
+        )
+        dev = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        model = YOLO(selected_weights)
+        results = model.predict(
+            source=image_path,
+            save=False,
+            conf=conf,
+            iou=iou,
+            device=dev,
+            imgsz=imgsz,
+            verbose=False,
+        )
+        if not results:
+            return []
+        res = results[0]
+        boxes = getattr(res, 'boxes', None)
+        if boxes is None or len(boxes) == 0:
+            return []
+        xyxy = boxes.xyxy.cpu().numpy() if hasattr(boxes, 'xyxy') else np.empty((0, 4))
+        confs = boxes.conf.cpu().numpy() if hasattr(boxes, 'conf') and boxes.conf is not None else np.array([])
+        clss = boxes.cls.cpu().numpy() if hasattr(boxes, 'cls') and boxes.cls is not None else np.array([])
+        names = getattr(res, 'names', None) or getattr(model, 'names', {})
+        outputs = []
+        for i in range(len(xyxy)):
+            c = int(clss[i]) if clss.size > i else -1
+            name = names.get(c, str(c)) if isinstance(names, dict) else (names[c] if isinstance(names, (list, tuple)) and c >= 0 and c < len(names) else str(c))
+            box = [float(v) for v in xyxy[i].tolist()]
+            conf_v = float(confs[i]) if confs.size > i else float('nan')
+            outputs.append({
+                'class_id': c,
+                'class_name': name,
+                'confidence': conf_v,
+                'bbox_xyxy': box,
+            })
+        return outputs
 
     # 加载模型（一次）
     try:
@@ -1874,8 +2076,16 @@ def image_has_brand(request):
                 else:
                     local_path = path
                 pred_idx, label, probs = _infer_image(model, tf, local_path, class_names)
-                # 类别 0 = 无品牌；1/2 = 有品牌
-                has_brand = (pred_idx in (1, 2))
+                # 类别 0 = 无品牌；1 = 有品牌
+                has_brand = (pred_idx == 1)
+                if pred_idx == 0:
+                    try:
+                        dets = _yolo_infer_image(local_path)
+                        # 规则：优先匹配类别名含 "logo"；若数据集为单类也可按有检测即视为 logo
+                        has_logo = any(('logo' in str(d.get('class_name', '')).lower()) for d in dets) or bool(dets)
+                        has_brand = bool(has_logo)
+                    except Exception:
+                        has_brand = False
                 results.append({'path': u, 'label_idx': pred_idx, 'label': label, 'probs': probs, 'has_brand': has_brand})
             elif parsed.scheme in ('http', 'https'):
                 with requests.get(path, timeout=15, stream=True) as r:
@@ -1886,8 +2096,15 @@ def image_has_brand(request):
                                 tmp.write(chunk)
                         temp_path = tmp.name
                 pred_idx, label, probs = _infer_image(model, tf, temp_path, class_names)
-                # 类别 0 = 无品牌；1/2 = 有品牌
-                has_brand = (pred_idx in (1, 2))
+                # 类别 0 = 无品牌；1 = 有品牌
+                has_brand = (pred_idx == 1)
+                if pred_idx == 0:
+                    try:
+                        dets = _yolo_infer_image(temp_path)
+                        has_logo = any(('logo' in str(d.get('class_name', '')).lower()) for d in dets) or bool(dets)
+                        has_brand = bool(has_logo)
+                    except Exception:
+                        has_brand = False
                 results.append({'path': u, 'label_idx': pred_idx, 'label': label, 'probs': probs, 'has_brand': has_brand})
             else:
                 results.append({'path': u, 'error': f'unsupported scheme: {parsed.scheme or "<none>"}'})
@@ -1908,7 +2125,7 @@ def image_has_brand(request):
         ok = False
         if 'error' not in r:
             try:
-                ok = int(r.get('label_idx', 0)) in (1, 2)
+                ok = bool(r.get('has_brand', False))
             except Exception:
                 ok = False
         result_map[str(u)] = ok

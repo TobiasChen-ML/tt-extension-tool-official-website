@@ -1,0 +1,10 @@
+{
+  "model_name": "resnet34",
+  "class_names": [
+    "0",
+    "1"
+  ],
+  "img_size": 224,
+  "feature_extract": false,
+  "run_name": "resnet34_20251018_124355"
+}
