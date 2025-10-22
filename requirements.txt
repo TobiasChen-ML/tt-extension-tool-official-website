@@ -9,4 +9,6 @@ langchain>=0.2.10
 langchain-openai>=0.1.22
 python-dotenv>=1.0.0
 deep-translator>=1.11.0
-ultralytics>=8.2.0
+ultralytics==8.3.217
+ultralytics-thop==2.0.17
+googletrans==4.0.0rc1

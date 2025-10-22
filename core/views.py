@@ -14,6 +14,8 @@ import os
 import difflib
 import requests
 from aliyun_sms import SMS
+import numpy as np
+# from ultralytics import YOLO  # 延迟在 _yolo_infer_image 内导入，避免 libGL ImportError
 from dotenv import load_dotenv
 load_dotenv()
 # 简单的内存存储验证码，生产使用请改为缓存/Redis
@@ -1199,32 +1201,16 @@ def clean_text_multi(request):
         return full_text, removed
 
     def _translate_to_zh_and_collect_untranslated_english(full_text: str):
-        # 使用免费开源翻译库（优先LibreTranslate，其次GoogleTranslator；若安装了Argos则离线）
         zh_text = ''
         english_left = []
         try:
+            from googletrans import Translator
+            translator = Translator()
             try:
-                from deep_translator import LibreTranslator
-                zh_text = LibreTranslator(source='en', target='zh').translate(full_text)
+                r = translator.translate(full_text, src='en', dest='zh-cn')
             except Exception:
-                zh_text = ''
-            if not zh_text:
-                try:
-                    from deep_translator import GoogleTranslator
-                    zh_text = GoogleTranslator(source='en', target='zh-CN').translate(full_text)
-                except Exception:
-                    zh_text = ''
-            if not zh_text:
-                try:
-                    import argostranslate.package
-                    import argostranslate.translate
-                    installed_languages = argostranslate.translate.get_installed_languages()
-                    en_lang = next((l for l in installed_languages if 'English' in l.name or l.code == 'en'), None)
-                    zh_lang = next((l for l in installed_languages if 'Chinese' in l.name or l.code in ('zh','zh-cn','zh-CN')), None)
-                    if en_lang and zh_lang:
-                        zh_text = en_lang.get_translation(zh_lang).translate(full_text)
-                except Exception:
-                    zh_text = ''
+                r = translator.translate(full_text, dest='zh-cn')
+            zh_text = getattr(r, 'text', '') or ''
         except Exception:
             zh_text = ''
         import re
@@ -1349,11 +1335,12 @@ def clean_text_multi(request):
             removed_tokens.extend(removed_db)
             removed_by_category.setdefault('brand', [])
             removed_by_category['brand'].extend(removed_db)
-
+        print(cleaned)
         # 第2步：将第1步结果翻译为中文，提取翻译结果中保留的英文片段（未能翻译的部分认定为品牌词），并从原句中删除
         _, english_left = _translate_to_zh_and_collect_untranslated_english(cleaned)
         if english_left:
             phrases = sorted(set(english_left), key=lambda s: (-len(s.strip()), s.lower()))
+            print(phrases)
             for p in phrases:
                 # 仅删除符合品牌候选的英文片段，避免误删通用英文词
                 if not _is_likely_brand_candidate(p):
@@ -1364,7 +1351,7 @@ def clean_text_multi(request):
                     removed_tokens.append(p)
                     removed_by_category.setdefault('brand', [])
                     removed_by_category['brand'].append(p)
-
+        print(cleaned)
         # 第3步：将步骤2后的文本输入 DeepSeek，得到最终品牌词并删除
         brands = _extract_brands_with_deepseek(cleaned)
         if brands:
@@ -1380,7 +1367,7 @@ def clean_text_multi(request):
                     removed_tokens.append(p)
                     removed_by_category.setdefault('brand', [])
                     removed_by_category['brand'].append(p)
-
+        print(cleaned)
     # 关键词：基于分词在 keyword 类别中模糊搜索最相关词并追加到文本末尾
     appended_keywords = []
 
@@ -1608,28 +1595,13 @@ def clean_text_multi_batch(request):
         zh_text = ''
         english_left = []
         try:
+            from googletrans import Translator
+            translator = Translator()
             try:
-                from deep_translator import LibreTranslator
-                zh_text = LibreTranslator(source='en', target='zh').translate(full_text)
+                r = translator.translate(full_text, src='en', dest='zh-cn')
             except Exception:
-                zh_text = ''
-            if not zh_text:
-                try:
-                    from deep_translator import GoogleTranslator
-                    zh_text = GoogleTranslator(source='en', target='zh-CN').translate(full_text)
-                except Exception:
-                    zh_text = ''
-            if not zh_text:
-                try:
-                    import argostranslate.package
-                    import argostranslate.translate
-                    installed_languages = argostranslate.translate.get_installed_languages()
-                    en_lang = next((l for l in installed_languages if 'English' in l.name or l.code == 'en'), None)
-                    zh_lang = next((l for l in installed_languages if 'Chinese' in l.name or l.code in ('zh','zh-cn','zh-CN')), None)
-                    if en_lang and zh_lang:
-                        zh_text = en_lang.get_translation(zh_lang).translate(full_text)
-                except Exception:
-                    zh_text = ''
+                r = translator.translate(full_text, dest='zh-cn')
+            zh_text = getattr(r, 'text', '') or ''
         except Exception:
             zh_text = ''
         import re
@@ -1993,24 +1965,15 @@ def image_has_brand(request):
     def _yolo_infer_image(
         image_path: str,
         weights: None | str = None,
-        conf: float = 0.25,
+        conf: float = 0.7,
         iou: float = 0.45,
         imgsz: int = 640,
         device: None | str = None,
     ):
-        try:
-            import numpy as np
-            from ultralytics import YOLO
-        except Exception as e:
-            # YOLO 未安装或导入失败，返回空检测
-            return []
+       
+
         # 项目根目录
-        PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        selected_weights = (
-            weights
-            or _find_best_yolo_weights(PROJECT_ROOT)
-            or 'yolov8n.pt'
-        )
+        selected_weights = "artifacts/yolov8_weights/best.pt"
         dev = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         model = YOLO(selected_weights)
         results = model.predict(
@@ -2079,13 +2042,9 @@ def image_has_brand(request):
                 # 类别 0 = 无品牌；1 = 有品牌
                 has_brand = (pred_idx == 1)
                 if pred_idx == 0:
-                    try:
-                        dets = _yolo_infer_image(local_path)
-                        # 规则：优先匹配类别名含 "logo"；若数据集为单类也可按有检测即视为 logo
-                        has_logo = any(('logo' in str(d.get('class_name', '')).lower()) for d in dets) or bool(dets)
-                        has_brand = bool(has_logo)
-                    except Exception:
-                        has_brand = False
+                    dets = _yolo_infer_image(local_path)
+                    # YOLO 输出为列表，非空即视为有品牌
+                    has_brand = bool(dets)
                 results.append({'path': u, 'label_idx': pred_idx, 'label': label, 'probs': probs, 'has_brand': has_brand})
             elif parsed.scheme in ('http', 'https'):
                 with requests.get(path, timeout=15, stream=True) as r:
@@ -2099,12 +2058,9 @@ def image_has_brand(request):
                 # 类别 0 = 无品牌；1 = 有品牌
                 has_brand = (pred_idx == 1)
                 if pred_idx == 0:
-                    try:
-                        dets = _yolo_infer_image(temp_path)
-                        has_logo = any(('logo' in str(d.get('class_name', '')).lower()) for d in dets) or bool(dets)
-                        has_brand = bool(has_logo)
-                    except Exception:
-                        has_brand = False
+                    dets = _yolo_infer_image(temp_path)
+                    # YOLO 输出为列表，非空即视为有品牌
+                    has_brand = bool(dets)
                 results.append({'path': u, 'label_idx': pred_idx, 'label': label, 'probs': probs, 'has_brand': has_brand})
             else:
                 results.append({'path': u, 'error': f'unsupported scheme: {parsed.scheme or "<none>"}'})
