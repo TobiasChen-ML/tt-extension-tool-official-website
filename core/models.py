@@ -233,3 +233,38 @@ class Trial(models.Model):
 
     def __str__(self):
         return f"{self.shopcode} - {self.times}"
+
+
+class SalesInfo(models.Model):
+    product_id = models.CharField(max_length=64)
+    title = models.TextField(blank=True, default='')
+    image_url = models.TextField(blank=True, default='')
+    time_start = models.DateField(null=True, blank=True)
+    time_end = models.DateField(null=True, blank=True)
+
+    gross_sale = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    product_card_buyer_cnt = models.IntegerField(null=True, blank=True)
+    product_card_ctr = models.FloatField(null=True, blank=True)
+    product_card_cvr = models.FloatField(null=True, blank=True)
+    product_card_gmv = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    product_card_listing_impression_cnt = models.IntegerField(null=True, blank=True)
+    product_card_pv = models.IntegerField(null=True, blank=True)
+    product_card_unit_sold_cnt = models.IntegerField(null=True, blank=True)
+    product_card_uv = models.IntegerField(null=True, blank=True)
+    unit_sold_cnt = models.IntegerField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['product_id']),
+            models.Index(fields=['time_start']),
+            models.Index(fields=['time_end']),
+        ]
+        unique_together = ('product_id', 'time_start', 'time_end')
+        verbose_name = 'Sales Info'
+        verbose_name_plural = 'Sales Info'
+
+    def __str__(self):
+        return f"{self.product_id} - {self.time_start}~{self.time_end}"

@@ -49,4 +49,8 @@ urlpatterns = [
     path('wxpay/notify/', views.wxpay_notify, name='wxpay_notify'),
     # 新增：订单创建接口
     path('api/order/make_by_listing/', views.make_order_by_listing, name='make_order_by_listing'),
+
+    # 新增：销售数据导入与查询
+    path('api/sales/import', views.sales_import, name='sales_import'),
+    path('sales/info', views.sales_info, name='sales_info'),
 ]

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>销售数据</title>
+  <link rel="stylesheet" href="/static/site.css" />
+  <style>
+    .container { max-width: 1080px; margin: 24px auto; padding: 0 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #eee; padding: 8px; font-size: 13px; }
+    th { background: #fafafa; text-align: left; }
+    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .pagination { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+    input, select { padding: 6px 8px; }
+    .muted { color: #888; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>销售数据</h2>
+
+    {% if require_password %}
+      <form method="post">
+        {% csrf_token %}
+        <label>访问密码：</label>
+        <input type="password" name="password" />
+        <button type="submit">进入</button>
+        <p class="muted">输入正确密码后可查看与筛选数据。</p>
+      </form>
+    {% else %}
+      <form method="get" class="toolbar">
+        <input type="text" name="product_id" value="{{ filters.product_id }}" placeholder="商品ID" />
+        <input type="text" name="q" value="{{ filters.q }}" placeholder="标题关键词" />
+        <input type="date" name="start" value="{{ filters.start }}" />
+        <input type="date" name="end" value="{{ filters.end }}" />
+        <select name="size">
+          <option value="10" {% if size == 10 %}selected{% endif %}>每页10</option>
+          <option value="20" {% if size == 20 %}selected{% endif %}>每页20</option>
+          <option value="50" {% if size == 50 %}selected{% endif %}>每页50</option>
+          <option value="100" {% if size == 100 %}selected{% endif %}>每页100</option>
+        </select>
+        <input type="hidden" name="sort" value="{{ sort }}" />
+        <input type="hidden" name="dir" value="{{ dir }}" />
+        <button type="submit">筛选</button>
+      </form>
+
+      <table>
+        <thead>
+          <tr>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=time_start&dir={% if sort == 'time_start' and dir == 'asc' %}desc{% else %}asc{% endif %}">开始{% if sort == 'time_start' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=time_end&dir={% if sort == 'time_end' and dir == 'asc' %}desc{% else %}asc{% endif %}">结束{% if sort == 'time_end' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_id&dir={% if sort == 'product_id' and dir == 'asc' %}desc{% else %}asc{% endif %}">商品ID{% if sort == 'product_id' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=title&dir={% if sort == 'title' and dir == 'asc' %}desc{% else %}asc{% endif %}">标题{% if sort == 'title' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th>图片</th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=gross_sale&dir={% if sort == 'gross_sale' and dir == 'asc' %}desc{% else %}asc{% endif %}">GMV{% if sort == 'gross_sale' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=unit_sold_cnt&dir={% if sort == 'unit_sold_cnt' and dir == 'asc' %}desc{% else %}asc{% endif %}">销量{% if sort == 'unit_sold_cnt' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_uv&dir={% if sort == 'product_card_uv' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片UV{% if sort == 'product_card_uv' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_pv&dir={% if sort == 'product_card_pv' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片PV{% if sort == 'product_card_pv' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_ctr&dir={% if sort == 'product_card_ctr' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片CTR%{% if sort == 'product_card_ctr' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_cvr&dir={% if sort == 'product_card_cvr' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片CVR%{% if sort == 'product_card_cvr' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_buyer_cnt&dir={% if sort == 'product_card_buyer_cnt' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片买家数{% if sort == 'product_card_buyer_cnt' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_listing_impression_cnt&dir={% if sort == 'product_card_listing_impression_cnt' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片曝光{% if sort == 'product_card_listing_impression_cnt' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_unit_sold_cnt&dir={% if sort == 'product_card_unit_sold_cnt' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片销量{% if sort == 'product_card_unit_sold_cnt' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+            <th><a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort=product_card_gmv&dir={% if sort == 'product_card_gmv' and dir == 'asc' %}desc{% else %}asc{% endif %}">卡片GMV{% if sort == 'product_card_gmv' %} {% if dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}</a></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td>{{ r.time_start|date:"Y-m-d" }}</td>
+              <td>{{ r.time_end|date:"Y-m-d" }}</td>
+              <td>{{ r.product_id }}</td>
+              <td>{{ r.title }}</td>
+              <td>
+                {% if r.image_url %}
+                  <a href="{{ r.image_url }}" target="_blank" rel="noopener noreferrer">
+                    <img src="{{ r.image_url }}" alt="{{ r.title }}" style="max-height:60px; max-width:100px; object-fit:cover; border:1px solid #eee;" />
+                  </a>
+                {% elif r.image %}
+                  <a href="{{ r.image }}" target="_blank" rel="noopener noreferrer">
+                    <img src="{{ r.image }}" alt="{{ r.title }}" style="max-height:60px; max-width:100px; object-fit:cover; border:1px solid #eee;" />
+                  </a>
+                {% elif r.cover %}
+                  <a href="{{ r.cover }}" target="_blank" rel="noopener noreferrer">
+                    <img src="{{ r.cover }}" alt="{{ r.title }}" style="max-height:60px; max-width:100px; object-fit:cover; border:1px solid #eee;" />
+                  </a>
+                {% elif r.thumbnail %}
+                  <a href="{{ r.thumbnail }}" target="_blank" rel="noopener noreferrer">
+                    <img src="{{ r.thumbnail }}" alt="{{ r.title }}" style="max-height:60px; max-width:100px; object-fit:cover; border:1px solid #eee;" />
+                  </a>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>{{ r.gross_sale }}</td>
+              <td>{{ r.unit_sold_cnt }}</td>
+              <td>{{ r.product_card_uv }}</td>
+              <td>{{ r.product_card_pv }}</td>
+              <td>{{ r.product_card_ctr }}</td>
+              <td>{{ r.product_card_cvr }}</td>
+              <td>{{ r.product_card_buyer_cnt }}</td>
+              <td>{{ r.product_card_listing_impression_cnt }}</td>
+              <td>{{ r.product_card_unit_sold_cnt }}</td>
+              <td>{{ r.product_card_gmv }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="15" class="muted">暂无数据</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="pagination">
+        <span>共 {{ total }} 条，页码 {{ page }}，每页 {{ size }}</span>
+        {% if page|add:-1 > 0 %}
+          <a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort={{ sort }}&dir={{ dir }}&page={{ page|add:-1 }}">上一页</a>
+        {% endif %}
+        {% if has_next %}
+          <a href="?product_id={{ filters.product_id }}&q={{ filters.q }}&start={{ filters.start }}&end={{ filters.end }}&size={{ size }}&sort={{ sort }}&dir={{ dir }}&page={{ page|add:1 }}">下一页</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>

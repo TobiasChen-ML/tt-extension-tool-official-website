@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.db import models
-from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, StoreKey, PointsBalance, UsageLog, Suggestion, Trial
+from .models import Profile, Product, Order, UserInfo, Category, Word, WordAlias, WordLog, StoreKey, PointsBalance, UsageLog, Suggestion, Trial, SalesInfo
 import random
 import string
 import json
@@ -2087,4 +2087,172 @@ def image_has_brand(request):
         result_map[str(u)] = ok
 
     return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'result': result_map}})
+
+
+@csrf_exempt
+def sales_import(request):
+    # 接收 POST JSON 或 ?file= 本地 JSON 文件路径
+    items = []
+    data = None
+    if request.method == 'POST':
+        data = parse_json(request)
+    if not data:
+        fp = request.GET.get('file') or request.POST.get('file')
+        if fp and os.path.exists(fp):
+            try:
+                with open(fp, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                data = None
+    if isinstance(data, dict):
+        items = data.get('list') or data.get('items') or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+    from datetime import datetime
+    from decimal import Decimal
+
+    def to_date(s):
+        try:
+            if not s:
+                return None
+            return datetime.strptime(str(s).strip(), '%Y-%m-%d').date()
+        except Exception:
+            return None
+
+    def to_int(s):
+        try:
+            t = str(s).replace(',', '').strip() if s is not None else ''
+            return int(t) if t else None
+        except Exception:
+            return None
+
+    def to_decimal(s):
+        try:
+            t = str(s).replace(',', '').replace('$', '').strip() if s is not None else ''
+            return Decimal(t) if t else None
+        except Exception:
+            return None
+
+    def to_percent(s):
+        try:
+            t = str(s).replace('%', '').strip() if s is not None else ''
+            return float(t) if t else None
+        except Exception:
+            return None
+
+    inserted = 0
+    updated = 0
+    skipped = 0
+
+    for it in items:
+        if not isinstance(it, dict):
+            skipped += 1
+            continue
+        # 兼容键名
+        product_id = str(it.get('product_id') or it.get('gid') or it.get('id') or '').strip()
+        time_start = to_date(it.get('time_start') or it.get('start') or it.get('date_start'))
+        time_end = to_date(it.get('time_end') or it.get('end') or it.get('date_end'))
+        if not product_id or not time_start or not time_end:
+            skipped += 1
+            continue
+        defaults = {
+            'title': it.get('title') or it.get('name') or '',
+            'image_url': it.get('image_url') or it.get('img') or it.get('image') or '',
+            'gross_sale': to_decimal(it.get('gross_sale') or it.get('gmv') or it.get('revenue')),
+            'product_card_buyer_cnt': to_int(it.get('product_card_buyer_cnt')),
+            'product_card_ctr': to_percent(it.get('product_card_ctr')),
+            'product_card_cvr': to_percent(it.get('product_card_cvr')),
+            'product_card_gmv': to_decimal(it.get('product_card_gmv')),
+            'product_card_listing_impression_cnt': to_int(it.get('product_card_listing_impression_cnt')),
+            'product_card_pv': to_int(it.get('product_card_pv')),
+            'product_card_unit_sold_cnt': to_int(it.get('product_card_unit_sold_cnt')),
+            'product_card_uv': to_int(it.get('product_card_uv')),
+            'unit_sold_cnt': to_int(it.get('unit_sold_cnt')),
+        }
+        obj, created = SalesInfo.objects.get_or_create(
+            product_id=product_id,
+            time_start=time_start,
+            time_end=time_end,
+            defaults=defaults,
+        )
+        if created:
+            inserted += 1
+        else:
+            SalesInfo.objects.filter(id=obj.id).update(**defaults)
+            updated += 1
+
+    return JsonResponse({'code': 0, 'msg': 'ok', 'data': {'inserted': inserted, 'updated': updated, 'skipped': skipped, 'total': len(items)}})
+
+
+@csrf_exempt
+def sales_info(request):
+    # 简单密码保护：POST 提交 password=eds1234*
+    if request.method == 'POST' and 'password' in request.POST:
+        pwd = request.POST.get('password') or ''
+        request.session['sales_auth'] = (pwd == 'eds1234*')
+    if not request.session.get('sales_auth'):
+        return render(request, 'sales_info.html', {'require_password': True})
+
+    q = request.GET.get('q', '').strip()
+    pid = request.GET.get('product_id', '').strip()
+    start = request.GET.get('start', '').strip()
+    end = request.GET.get('end', '').strip()
+
+    qs = SalesInfo.objects.all()
+    if pid:
+        qs = qs.filter(product_id__icontains=pid)
+    if q:
+        qs = qs.filter(title__icontains=q)
+
+    # 通用排序：通过 ?sort=字段名 & dir=asc|desc 控制
+    sort = (request.GET.get('sort') or 'time_end').strip()
+    dir = (request.GET.get('dir') or 'desc').strip()
+    allowed = {
+        'time_start': 'time_start',
+        'time_end': 'time_end',
+        'product_id': 'product_id',
+        'title': 'title',
+        'gross_sale': 'gross_sale',
+        'unit_sold_cnt': 'unit_sold_cnt',
+        'product_card_uv': 'product_card_uv',
+        'product_card_pv': 'product_card_pv',
+        'product_card_buyer_cnt': 'product_card_buyer_cnt',
+        'product_card_ctr': 'product_card_ctr',
+        'product_card_cvr': 'product_card_cvr',
+        'product_card_gmv': 'product_card_gmv',
+        'product_card_listing_impression_cnt': 'product_card_listing_impression_cnt',
+        'product_card_unit_sold_cnt': 'product_card_unit_sold_cnt',
+    }
+    field = allowed.get(sort, 'time_end')
+    order = field if dir == 'asc' else f'-{field}'
+    qs = qs.order_by(order, '-id')
+
+    from datetime import datetime
+    def _parse_date(s):
+        try:
+            return datetime.strptime(s, '%Y-%m-%d').date()
+        except Exception:
+            return None
+    ds = _parse_date(start) if start else None
+    de = _parse_date(end) if end else None
+    if ds:
+        qs = qs.filter(time_start__gte=ds)
+    if de:
+        qs = qs.filter(time_end__lte=de)
+
+    paged, total, page, size = build_pagination(qs, request)
+    has_next = (total > page * size)
+    return render(request, 'sales_info.html', {
+        'require_password': False,
+        'rows': paged,
+        'total': total,
+        'page': page,
+        'size': size,
+        'has_next': has_next,
+        'sort': sort,
+        'dir': dir,
+        'filters': {'q': q, 'product_id': pid, 'start': start, 'end': end},
+    })
 
